@@ -39,9 +39,10 @@ pub fn build(b: *std.Build) void {
         // Later on we'll use this module as the root module of a test executable
         // which requires us to specify a target.
         .target = target,
-        // TODO: uncomment this once we import the CLAP header
-        // .link_libc = .yes,
+        .link_libc = true,
     });
+
+    mod.addIncludePath(b.path("vendor/clap/include"));
 
     // Basic hello-world attempt at building a shared library
     const lib = b.addLibrary(.{

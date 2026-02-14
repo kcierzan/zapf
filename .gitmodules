@@ -1,0 +1,3 @@
+[submodule "vendor/clap"]
+	path = vendor/clap
+	url = https://github.com/free-audio/clap
