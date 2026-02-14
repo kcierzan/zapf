@@ -1,5 +1,8 @@
 //! By convention, root.zig is the root source file when making a library.
 const std = @import("std");
+const _ = @cImport({
+    @cInclude("clap/clap.h");
+});
 
 pub export fn hello() callconv(.c) void {
     // Stdout is for the actual output of your application, for example if you
