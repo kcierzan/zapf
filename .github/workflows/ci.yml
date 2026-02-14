@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-    pull_request:
+  pull_request:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -24,13 +24,10 @@ jobs:
           fetch-depth: 1
 
       - name: Check formatting
-        run: find . type f -name "*.zig" -not -path "*/.*" | xargs zig fmt --check
+        run: find . -type f -name "*.zig" -not -path "*/.*" | xargs zig fmt --check
 
       - name: Run tests
         run: zig build test
 
       - name: Run build
         run: zig build
-
-
-
