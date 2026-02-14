@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+    pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  zapf-pipeline:
+    name: Lint & Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Check formatting
+        run: find . type f -name "*.zig" -not -path "*/.*" | xargs zig fmt --check
+
+      - name: Run tests
+        run: zig build test
+
+      - name: Run build
+        run: zig build
+
+
+
