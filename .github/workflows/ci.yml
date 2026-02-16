@@ -31,7 +31,7 @@ jobs:
         run: find . -type f -name "*.zig" -not -path "*/.*" | xargs zig fmt --check
 
       - name: Run tests
-        run: zig build test
+        run: zig build test --summary all
 
       - name: Run build
-        run: zig build
+        run: zig build --summary all
