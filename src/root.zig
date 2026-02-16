@@ -8,4 +8,5 @@ pub const PluginDescriptor = plugin.PluginDescriptor;
 test {
     // force test evaluation
     _ = @import("plugin.zig");
+    _ = @import("params.zig");
 }
