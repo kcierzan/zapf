@@ -44,7 +44,7 @@ pub fn build(b: *std.Build) void {
 
     mod.addIncludePath(b.path("vendor/clap/include"));
 
-    // Basic hello-world attempt at building a shared library
+    // Create dylib/dll/so
     const lib = b.addLibrary(.{
         .name = "zapf",
         .linkage = .dynamic,
@@ -153,6 +153,10 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+
+    const check_step = b.step("check", "Build for zls");
+    check_step.dependOn(&lib.step);
+    check_step.dependOn(&mod_tests.step);
 
     // Just like flags, top level steps are also listed in the `--help` menu.
     //
