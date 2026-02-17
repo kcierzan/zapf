@@ -153,11 +153,9 @@ pub fn ClapAdapter(comptime PluginType: type) type {
             id: [*c]const u8,
         ) callconv(.c) ?*const anyopaque {
             _ = plugin;
-            // TODO: add more extensions here! start with Params
-            return switch (id) {
-                audio_ports.extension_name => @ptrCast(&audio_ports.ext),
-                else => null,
-            };
+            // TODO: add more extensions here
+            if (std.mem.eql(u8, id, audio_ports.extension_name)) return @ptrCast(&audio_ports.ext);
+            return null;
         }
 
         fn pluginOnMainThread(plugin: [*c]const clap.Plugin) callconv(.c) void {
