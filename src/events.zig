@@ -80,6 +80,10 @@ test "isEventIterator returns false for a non-iterator" {
     try t.expect(!isEventIterator(NonIterator));
 }
 
+test "isEventIterator returns false for an empty struct" {
+    try t.expect(!isEventIterator(struct {}));
+}
+
 test "SliceEventIterator yields all events in slice order" {
     const ev = [_]PluginEvent{ .{ .time = 0, .data = .{ .note_on = .{
         .note_id = 1,

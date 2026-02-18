@@ -5,30 +5,37 @@ const c = @cImport({
 
 // TODO: re-export the string constants in plugin-features.h
 
-pub const Version = c.clap_version_t;
-pub const Plugin = c.clap_plugin_t;
-pub const PluginDescriptor = c.clap_plugin_descriptor_t;
-pub const PluginEntry = c.clap_plugin_entry_t;
-pub const PluginFactory = c.clap_plugin_factory_t;
-pub const Host = c.clap_host_t;
-pub const Process = c.clap_process_t;
 pub const AudioBuffer = c.clap_audio_buffer_t;
+pub const AudioPortInfo = c.clap_audio_port_info_t;
 pub const EventHeader = c.clap_event_header_t;
-pub const InputEvents = c.clap_input_events_t;
-pub const OutputEvents = c.clap_output_events_t;
-pub const UniversalPluginId = c.clap_universal_plugin_id_t;
-pub const EventParam = c.clap_event_param_value_t;
-pub const EventMod = c.clap_event_param_mod_t;
-pub const EventNote = c.clap_event_note_t;
-pub const EventNoteExpression = c.clap_event_note_expression_t;
-pub const EventTransport = c.clap_event_transport_t;
 pub const EventMidi = c.clap_event_midi_t;
 pub const EventMidi2 = c.clap_event_midi2_t;
 pub const EventMidiSysex = c.clap_event_midi_sysex_t;
+pub const EventMod = c.clap_event_param_mod_t;
+pub const EventNote = c.clap_event_note_t;
+pub const EventNoteExpression = c.clap_event_note_expression_t;
+pub const EventParam = c.clap_event_param_value_t;
+pub const EventTransport = c.clap_event_transport_t;
+pub const Host = c.clap_host_t;
+pub const InputEvents = c.clap_input_events_t;
+pub const OutputEvents = c.clap_output_events_t;
+pub const ParamInfo = c.clap_param_info_t;
+pub const Plugin = c.clap_plugin_t;
+pub const PluginAudioPorts = c.clap_plugin_audio_ports_t;
+pub const PluginDescriptor = c.clap_plugin_descriptor_t;
+pub const PluginEntry = c.clap_plugin_entry_t;
+pub const PluginFactory = c.clap_plugin_factory_t;
+pub const PluginParams = c.clap_plugin_params_t;
+pub const Process = c.clap_process_t;
+pub const UniversalPluginId = c.clap_universal_plugin_id_t;
+pub const Version = c.clap_version_t;
 
+pub const AUDIO_PORT_IS_MAIN = c.CLAP_AUDIO_PORT_IS_MAIN;
 pub const CORE_EVENT_SPACE_ID = c.CLAP_CORE_EVENT_SPACE_ID;
-pub const Id = u32;
+pub const EXT_AUDIO_PORTS = c.CLAP_EXT_AUDIO_PORTS;
+pub const EXT_PARAMS = c.CLAP_EXT_PARAMS;
 pub const INVALID_ID = std.math.maxInt(u32);
+pub const Id = u32;
 
 pub const EventFlags = struct {
     pub const EVENT_IS_LIVE = c.CLAP_EVENT_IS_LIVE;
@@ -49,6 +56,14 @@ pub const Event = struct {
     pub const EVENT_MIDI = c.CLAP_EVENT_MIDI;
     pub const EVENT_MIDI_SYSEX = c.CLAP_EVENT_MIDI_SYSEX;
     pub const EVENT_MIDI2 = c.CLAP_EVENT_MIDI2;
+};
+
+pub const ProcessResult = struct {
+    pub const ERROR = c.CLAP_PROCESS_ERROR;
+    pub const CONTINUE = c.CLAP_PROCESS_CONTINUE;
+    pub const CONTINUE_IF_NOT_QUIET = c.CLAP_PROCESS_CONTINUE_IF_NOT_QUIET;
+    pub const TAIL = c.CLAP_PROCESS_TAIL;
+    pub const SLEEP = c.CLAP_PROCESS_SLEEP;
 };
 
 pub const NoteExpression = struct {

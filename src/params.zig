@@ -1,4 +1,5 @@
 const std = @import("std");
+const t = std.testing;
 
 pub const ParamFlags = struct {
     automatable: bool = false,
@@ -69,8 +70,8 @@ test "ParamValues reset defaults" {
     var vals: ParamValues(test_params.len) = .{};
     vals.reset(test_params);
 
-    try std.testing.expectEqual(@as(f64, 0.5), vals.get(0));
-    try std.testing.expectEqual(@as(f64, 0.0), vals.get(1));
+    try t.expectEqual(@as(f64, 0.5), vals.get(0));
+    try t.expectEqual(@as(f64, 0.0), vals.get(1));
 }
 
 test "ParamValues set clamps to range" {
@@ -78,18 +79,25 @@ test "ParamValues set clamps to range" {
     vals.reset(test_params);
 
     vals.set(0, 5.0, test_params); // max is 1.0
-    try std.testing.expectEqual(@as(f64, 1.0), vals.get(0));
+    try t.expectEqual(@as(f64, 1.0), vals.get(0));
 
     vals.set(1, -10.0, test_params); // min is -1.0
-    try std.testing.expectEqual(@as(f64, -1.0), vals.get(1));
+    try t.expectEqual(@as(f64, -1.0), vals.get(1));
 }
 
 test "ParamValues indexFromId finds correct index" {
     const idx = ParamValues(test_params.len).indexFromId(test_params, 1);
-    try std.testing.expectEqual(@as(?usize, 1), idx);
+    try t.expectEqual(@as(?usize, 1), idx);
 }
 
 test "ParamValues indexFromId returns null for unknown ID" {
     const idx = ParamValues(test_params.len).indexFromId(test_params, 10);
-    try std.testing.expectEqual(@as(?usize, null), idx);
+    try t.expectEqual(@as(?usize, null), idx);
+}
+
+test "ParamFlags defaults are all false" {
+    const flags = ParamFlags{};
+    try t.expect(!flags.automatable);
+    try t.expect(!flags.modulatable);
+    try t.expect(!flags.stepped);
 }
