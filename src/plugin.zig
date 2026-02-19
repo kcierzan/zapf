@@ -73,7 +73,7 @@ const ValidPlugin = struct {
         _ = sample_rate;
     }
 
-    pub fn process(self: *ValidPlugin, ctx: anytype) process.ProcessResult {
+    pub fn process(self: *ValidPlugin, ctx: anytype) @import("process.zig").ProcessResult {
         _ = self;
         _ = ctx;
         return .@"continue";

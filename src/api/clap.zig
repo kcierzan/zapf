@@ -96,14 +96,6 @@ pub const NoteExpression = struct {
     pub const PRESSURE = c.CLAP_NOTE_EXPRESSION_PRESSURE;
 };
 
-pub const ProcessStatus = struct {
-    pub const ERROR = c.CLAP_PROCESS_ERROR;
-    pub const CONTINUE = c.CLAP_PROCESS_CONTINUE;
-    pub const CONTINUE_IF_NOT_QUIET = c.CLAP_PROCESS_CONTINUE_IF_NOT_QUIET;
-    pub const TAIL = c.CLAP_PROCESS_TAIL;
-    pub const SLEEP = c.CLAP_PROCESS_SLEEP;
-};
-
 pub const PluginFeatures = struct {
     pub const INSTRUMENT = c.CLAP_PLUGIN_FEATURE_INSTRUMENT;
     pub const AUDIO_EFFECT = c.CLAP_PLUGIN_FEATURE_AUDIO_EFFECT;

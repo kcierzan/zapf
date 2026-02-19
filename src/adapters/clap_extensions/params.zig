@@ -3,8 +3,11 @@ const t = std.testing;
 const clap = @import("../../api/clap.zig");
 const params_mod = @import("../../params.zig");
 const plugin_mod = @import("../../plugin.zig");
+const adapter = @import("../clap.zig");
 
 pub fn ParamsExtension(comptime PluginType: type) type {
+    const Instance = adapter.InstanceData(PluginType);
+
     return struct {
         pub const ext = clap.PluginParams{
             .count = paramsCount,
@@ -65,10 +68,10 @@ pub fn ParamsExtension(comptime PluginType: type) type {
             param_id: u32,
             out_value: [*c]f64,
         ) callconv(.c) bool {
-            const instance: *PluginType = @ptrCast(@alignCast(plugin.*.plugin_data));
+            const data: *Instance = @ptrCast(@alignCast(plugin.*.plugin_data));
             const PV = params_mod.ParamValues(PluginType.params.len);
             const idx = PV.indexFromId(PluginType.params, param_id) orelse return false;
-            out_value.* = instance.param_values.get(idx);
+            out_value.* = data.plugin.param_values.get(idx);
             return true;
         }
 
@@ -107,9 +110,9 @@ pub fn ParamsExtension(comptime PluginType: type) type {
             out_events: [*c]const clap.OutputEvents,
         ) callconv(.c) void {
             _ = out_events;
-            const instance: *PluginType = @ptrCast(@alignCast(plugin.*.plugin_data));
+            const data: *Instance = @ptrCast(@alignCast(plugin.*.plugin_data));
             const ie: *const clap.InputEvents = in_events orelse return;
-            applyParamEvents(PluginType, instance, ie);
+            applyParamEvents(PluginType, &data.plugin, ie);
         }
     };
 }
@@ -193,13 +196,10 @@ test "paramsGetInfo returns false for out-of-bounds index" {
     try t.expect(!Ext.paramsGetInfo(undefined, 99, &info));
 }
 
-test "paramsGetValue returns default after reset" {
-    const Ext = ParamsExtension(TestPluginWithParams);
-    var instance = TestPluginWithParams{};
-    instance.param_values.reset(TestPluginWithParams.params);
-    var plugin = clap.Plugin{
+fn makeTestPlugin(data: *adapter.InstanceData(TestPluginWithParams)) clap.Plugin {
+    return clap.Plugin{
         .desc = undefined,
-        .plugin_data = &instance,
+        .plugin_data = data,
         .init = undefined,
         .destroy = undefined,
         .activate = undefined,
@@ -211,6 +211,13 @@ test "paramsGetValue returns default after reset" {
         .get_extension = undefined,
         .on_main_thread = undefined,
     };
+}
+
+test "paramsGetValue returns default after reset" {
+    const Ext = ParamsExtension(TestPluginWithParams);
+    var data = adapter.InstanceData(TestPluginWithParams){ .plugin = .{} };
+    data.plugin.param_values.reset(TestPluginWithParams.params);
+    var plugin = makeTestPlugin(&data);
     var value: f64 = undefined;
     try t.expect(Ext.paramsGetValue(&plugin, 0, &value));
     try t.expectEqual(@as(f64, 0.5), value);
@@ -218,21 +225,8 @@ test "paramsGetValue returns default after reset" {
 
 test "paramsGetValue returns false for unknown param id" {
     const Ext = ParamsExtension(TestPluginWithParams);
-    var instance = TestPluginWithParams{};
-    var plugin = clap.Plugin{
-        .desc = undefined,
-        .plugin_data = &instance,
-        .init = undefined,
-        .destroy = undefined,
-        .activate = undefined,
-        .deactivate = undefined,
-        .start_processing = undefined,
-        .stop_processing = undefined,
-        .reset = undefined,
-        .process = undefined,
-        .get_extension = undefined,
-        .on_main_thread = undefined,
-    };
+    var data = adapter.InstanceData(TestPluginWithParams){ .plugin = .{} };
+    var plugin = makeTestPlugin(&data);
     var value: f64 = undefined;
     try t.expect(!Ext.paramsGetValue(&plugin, 999, &value));
 }
