@@ -82,7 +82,7 @@ pub fn ParamsExtension(comptime PluginType: type) type {
             _ = plugin;
             _ = param_id;
             const buf = out_buf[0..out_buf_size];
-            const result = std.fmt.bufPrint(buf, "{d:.2}", .{value}) catch return false;
+            const result = std.fmt.bufPrint(buf[0 .. out_buf_size - 1], "{d:.2}", .{value}) catch return false;
             buf[result.len] = 0;
             return true;
         }
