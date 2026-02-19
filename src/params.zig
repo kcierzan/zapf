@@ -34,6 +34,7 @@ pub fn ParamValues(comptime count: usize) type {
         }
 
         pub fn get(self: *const Self, index: usize) f64 {
+            if (comptime count == 0) unreachable;
             return self.values[index];
         }
 

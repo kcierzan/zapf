@@ -113,24 +113,15 @@ pub fn ClapAdapter(comptime PluginType: type) type {
                 }
             }
 
-            // apply parameter events directly to the plugins ParamValues
             const in_events = p.in_events;
+            if (in_events) |ie| {
+                params_ext.applyParamEvents(PluginType, instance, ie);
+            }
+
             const event_count: u32 = if (in_events) |ie|
                 if (ie.size) |size_fn| size_fn(ie) else 0
             else
                 0;
-
-            for (0..event_count) |i| {
-                const get_fn = in_events.?.get orelse continue;
-                const header = get_fn(in_events.?, @intCast(i));
-                if (header.space_id == clap.CORE_EVENT_SPACE_ID and header.type == clap.Event.EVENT_PARAM_VALUE) {
-                    const ev: *const clap.EventParam = @ptrCast(@alignCast(header));
-                    const PV = params_mod.ParamValues(PluginType.params.len);
-                    if (PV.indexFromId(PluginType.params, ev.param_id)) |idx| {
-                        instance.param_values.set(idx, ev.value, PluginType.params);
-                    }
-                }
-            }
 
             // Construct the generic ProcessContext - ClapEventIterator skips param events
             const Context = process_mod.ProcessContext(ClapEventIterator);
@@ -155,7 +146,6 @@ pub fn ClapAdapter(comptime PluginType: type) type {
             id: [*c]const u8,
         ) callconv(.c) ?*const anyopaque {
             _ = plugin;
-            // TODO: add more extensions here
             const ext_id = std.mem.span(id);
 
             if (std.mem.eql(u8, ext_id, AudioPorts.extension_name)) {
