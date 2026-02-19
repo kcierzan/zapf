@@ -30,6 +30,18 @@ pub fn ParamsExtension(comptime PluginType: type) type {
             _ = plugin;
             if (param_index >= PluginType.params.len) return false;
             const param = PluginType.params[param_index];
+
+            comptime {
+                const name_capacity = @typeInfo(@TypeOf(@as(clap.ParamInfo, undefined).name)).array.len;
+                const module_capacity = @typeInfo(@TypeOf(@as(clap.ParamInfo, undefined).module)).array.len;
+                for (PluginType.params) |p| {
+                    if (p.name.len >= name_capacity)
+                        @compileError("param name '" ++ p.name ++ "' exceeds CLAP_NAME_SIZE");
+                    if (p.module.len >= module_capacity)
+                        @compileError("param module '" ++ p.module ++ "' exceeds CLAP_PATH_SIZE");
+                }
+            }
+
             info.*.id = param.id;
             info.*.min_value = param.min;
             info.*.max_value = param.max;
