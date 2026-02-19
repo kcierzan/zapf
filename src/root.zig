@@ -13,4 +13,5 @@ test {
     _ = @import("process.zig");
     _ = @import("adapters/clap.zig");
     _ = @import("adapters/clap_extensions/audio_ports.zig");
+    _ = @import("adapters/clap_extensions/params.zig");
 }

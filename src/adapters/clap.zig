@@ -7,13 +7,15 @@ const params_mod = @import("../params.zig");
 const process_mod = @import("../process.zig");
 const plugin_mod = @import("../plugin.zig");
 
-const audio_ports_extension = @import("../adapters/clap_extensions/audio_ports.zig");
+const audio_ports_ext = @import("../adapters/clap_extensions/audio_ports.zig");
+const params_ext = @import("../adapters/clap_extensions/params.zig");
 
 pub fn ClapAdapter(comptime PluginType: type) type {
     return struct {
         const Self = @This();
         const clap_desc = toClapDescriptor(PluginType.descriptor);
-        const audio_ports = audio_ports_extension.AudioPortsExtension(PluginType);
+        const AudioPorts = audio_ports_ext.AudioPortsExtension(PluginType);
+        const Params = params_ext.ParamsExtension(PluginType);
 
         /// The clap_plugin_t instance. Hosts receive a pointer to this.
         fn makePluginVtable(instance: *PluginType) clap.Plugin {
@@ -111,24 +113,11 @@ pub fn ClapAdapter(comptime PluginType: type) type {
                 }
             }
 
-            // apply parameter events directly to the plugins ParamValues
-            const in_events = p.in_events;
-            const event_count: u32 = if (in_events) |ie|
-                if (ie.size) |size_fn| size_fn(ie) else 0
-            else
-                0;
+            const in_events: *const clap.InputEvents = p.in_events orelse &empty_input_events;
 
-            for (0..event_count) |i| {
-                const get_fn = in_events.?.get orelse continue;
-                const header = get_fn(in_events.?, @intCast(i));
-                if (header.space_id == clap.CORE_EVENT_SPACE_ID and header.type == clap.Event.EVENT_PARAM_VALUE) {
-                    const ev: *const clap.EventParam = @ptrCast(@alignCast(header));
-                    const PV = params_mod.ParamValues(PluginType.params.len);
-                    if (PV.indexFromId(PluginType.params, ev.param_id)) |idx| {
-                        instance.param_values.set(idx, ev.value, PluginType.params);
-                    }
-                }
-            }
+            params_ext.applyParamEvents(PluginType, instance, in_events);
+
+            const event_count: u32 = if (in_events.size) |size_fn| size_fn(in_events) else 0;
 
             // Construct the generic ProcessContext - ClapEventIterator skips param events
             const Context = process_mod.ProcessContext(ClapEventIterator);
@@ -139,7 +128,7 @@ pub fn ClapAdapter(comptime PluginType: type) type {
                 .sample_rate = 0, // filled in from `activate`
                 .steady_time = p.steady_time,
                 .events = ClapEventIterator{
-                    .input_events = in_events.?,
+                    .input_events = in_events,
                     .count = event_count,
                 },
             };
@@ -153,8 +142,14 @@ pub fn ClapAdapter(comptime PluginType: type) type {
             id: [*c]const u8,
         ) callconv(.c) ?*const anyopaque {
             _ = plugin;
-            // TODO: add more extensions here
-            if (std.mem.eql(u8, id, audio_ports.extension_name)) return @ptrCast(&audio_ports.ext);
+            const ext_id = std.mem.span(id);
+
+            if (std.mem.eql(u8, ext_id, AudioPorts.extension_name)) {
+                return @ptrCast(&AudioPorts.ext);
+            }
+            if (std.mem.eql(u8, ext_id, Params.extension_name)) {
+                return @ptrCast(&Params.ext);
+            }
             return null;
         }
 
@@ -176,6 +171,7 @@ const TestPlugin = struct {
 
     initialized: bool = false,
     process_count: u32 = 0,
+    param_values: params_mod.ParamValues(params.len) = .{},
 
     pub fn init(self: *TestPlugin, sample_rate: f64) void {
         _ = sample_rate;
@@ -196,6 +192,24 @@ const TestPlugin = struct {
 test "ClapAdapter generates a valid vtable type" {
     const Adapter = ClapAdapter(TestPlugin);
     try t.expectEqual(@TypeOf(Adapter.clap_desc), clap.PluginDescriptor);
+}
+
+test "pluginGetExtension returns audio-ports extension" {
+    const Adapter = ClapAdapter(TestPlugin);
+    const audio_ptr = Adapter.pluginGetExtension(undefined, &clap.EXT_AUDIO_PORTS);
+    try t.expect(audio_ptr != null);
+}
+
+test "pluginGetExtension returns params extension" {
+    const Adapter = ClapAdapter(TestPlugin);
+    const params_ptr = Adapter.pluginGetExtension(undefined, &clap.EXT_PARAMS);
+    try t.expect(params_ptr != null);
+}
+
+test "pluginGetExtension with unknown extension returns null" {
+    const Adapter = ClapAdapter(TestPlugin);
+    const unknown_ptr = Adapter.pluginGetExtension(undefined, "clap.unknown-ext");
+    try t.expectEqual(unknown_ptr, null);
 }
 
 fn toClapProcessResult(comptime result: process_mod.ProcessResult) i32 {
@@ -264,6 +278,12 @@ test "toClapDescriptor converts fields correctly" {
     // Check features array is null-terminated
     try t.expect(clap_desc.features[2] == null);
 }
+
+const empty_input_events = clap.InputEvents{
+    .ctx = null,
+    .size = null,
+    .get = null,
+};
 
 const ClapEventIterator = struct {
     input_events: *const clap.InputEvents,
