@@ -81,6 +81,7 @@ pub fn ParamsExtension(comptime PluginType: type) type {
         ) callconv(.c) bool {
             _ = plugin;
             _ = param_id;
+            if (out_buf_size == 0) return false;
             const buf = out_buf[0..out_buf_size];
             const result = std.fmt.bufPrint(buf[0 .. out_buf_size - 1], "{d:.2}", .{value}) catch return false;
             buf[result.len] = 0;
@@ -244,4 +245,39 @@ test "paramsValueToText and paramsTextToValue round-trip" {
     var result: f64 = undefined;
     try t.expect(Ext.paramsTextToValue(undefined, 0, text.ptr, &result));
     try t.expectEqual(@as(f64, 0.75), result);
+}
+
+test "paramsValueToText returns false for zero-size buffer" {
+    const Ext = ParamsExtension(TestPluginWithParams);
+    var buf: [1]u8 = undefined;
+    try t.expect(!Ext.paramsValueToText(undefined, 0, 0.75, &buf, 0));
+}
+
+test "paramsValueToText null-terminates within exact-fit buffer" {
+    const Ext = ParamsExtension(TestPluginWithParams);
+    // "0.75" is 4 chars; buffer of 5 fits the text + null exactly
+    var buf: [5]u8 = .{ 0xff, 0xff, 0xff, 0xff, 0xff };
+    try t.expect(Ext.paramsValueToText(undefined, 0, 0.75, &buf, buf.len));
+    try t.expectEqualStrings("0.75", std.mem.sliceTo(&buf, 0));
+}
+
+test "paramsValueToText returns false when buffer is too small for value" {
+    const Ext = ParamsExtension(TestPluginWithParams);
+    // "0.75" needs 4 chars + null = 5 bytes; buffer of 2 (1 usable) is too small
+    var buf: [2]u8 = undefined;
+    try t.expect(!Ext.paramsValueToText(undefined, 0, 0.75, &buf, buf.len));
+}
+
+test "applyParamEvents is a no-op with null function pointers" {
+    var instance = TestPluginWithParams{};
+    instance.param_values.reset(TestPluginWithParams.params);
+    const empty = clap.InputEvents{
+        .ctx = null,
+        .size = null,
+        .get = null,
+    };
+    // should return early without touching param values
+    applyParamEvents(TestPluginWithParams, &instance, &empty);
+    try t.expectEqual(@as(f64, 0.5), instance.param_values.get(0));
+    try t.expectEqual(@as(f64, 0.0), instance.param_values.get(1));
 }
