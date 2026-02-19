@@ -35,10 +35,16 @@ pub fn ParamsExtension(comptime PluginType: type) type {
             info.*.max_value = param.max;
             info.*.default_value = param.default;
             info.*.flags = 0;
-
             if (param.flags.automatable) info.*.flags |= clap.ParamMasks.AUTOMATABLE;
+            if (param.flags.modulatable) info.*.flags |= clap.ParamMasks.MODULATABLE;
+            if (param.flags.stepped) info.*.flags |= clap.ParamMasks.STEPPED;
+            if (param.flags.hidden) info.*.flags |= clap.ParamMasks.HIDDEN;
+            if (param.flags.readonly) info.*.flags |= clap.ParamMasks.READONLY;
+            if (param.flags.bypass) info.*.flags |= clap.ParamMasks.BYPASS;
             @memcpy(info.*.name[0..param.name.len], param.name);
             info.*.name[param.name.len] = 0;
+            @memcpy(info.*.module[0..param.module.len], param.module);
+            info.*.module[param.module.len] = 0;
             return true;
         }
 
@@ -90,24 +96,28 @@ pub fn ParamsExtension(comptime PluginType: type) type {
             _ = out_events;
             const instance: *PluginType = @ptrCast(@alignCast(plugin.*.plugin_data));
             const ie: *const clap.InputEvents = in_events orelse return;
-            const size_fn = ie.*.size orelse return;
-            const get_fn = ie.*.get orelse return;
-            const event_count = size_fn(ie);
-
-            for (0..event_count) |i| {
-                const header: *const clap.EventHeader = get_fn(ie, @intCast(i));
-                if (header.space_id == clap.CORE_EVENT_SPACE_ID and
-                    header.type == clap.Event.EVENT_PARAM_VALUE)
-                {
-                    const ev: *const clap.EventParam = @ptrCast(@alignCast(header));
-                    const PV = params_mod.ParamValues(PluginType.params.len);
-                    if (PV.indexFromId(PluginType.params, ev.param_id)) |idx| {
-                        instance.param_values.set(idx, ev.value, PluginType.params);
-                    }
-                }
-            }
+            applyParamEvents(PluginType, instance, ie);
         }
     };
+}
+
+pub fn applyParamEvents(comptime PluginType: type, instance: *PluginType, ie: *const clap.InputEvents) void {
+    const size_fn = ie.*.size orelse return;
+    const get_fn = ie.*.get orelse return;
+    const event_count = size_fn(ie);
+
+    for (0..event_count) |i| {
+        const header: *const clap.EventHeader = get_fn(ie, @intCast(i));
+        if (header.space_id == clap.CORE_EVENT_SPACE_ID and
+            header.type == clap.Event.EVENT_PARAM_VALUE)
+        {
+            const ev: *const clap.EventParam = @ptrCast(@alignCast(header));
+            const PV = params_mod.ParamValues(PluginType.params.len);
+            if (PV.indexFromId(PluginType.params, ev.param_id)) |idx| {
+                instance.param_values.set(idx, ev.value, PluginType.params);
+            }
+        }
+    }
 }
 
 const TestPluginWithParams = struct {
@@ -128,7 +138,7 @@ const TestPluginWithParams = struct {
 
     pub fn init(self: *@This(), sample_rate: f64) void {
         _ = sample_rate;
-        self.params.reset(params);
+        self.param_values.reset(params);
     }
 
     pub fn process(self: *@This(), ctx: anytype) @import("../../process.zig").ProcessResult {
@@ -150,4 +160,76 @@ const TestPluginEmpty = struct {
 test "params extension reports 0 for no params" {
     const Ext = ParamsExtension(TestPluginEmpty);
     try t.expectEqual(@as(u32, 0), Ext.paramsCount(undefined));
+}
+
+test "paramsGetInfo populates name, range, default, and flags" {
+    const Ext = ParamsExtension(TestPluginWithParams);
+    var info: clap.ParamInfo = undefined;
+    try t.expect(Ext.paramsGetInfo(undefined, 0, &info));
+    try t.expectEqual(@as(u32, 0), info.id);
+    try t.expectEqual(@as(f64, 0.0), info.min_value);
+    try t.expectEqual(@as(f64, 1.0), info.max_value);
+    try t.expectEqual(@as(f64, 0.5), info.default_value);
+    try t.expect(info.flags & clap.ParamMasks.AUTOMATABLE != 0);
+    try t.expectEqualStrings("Gain", info.name[0..4]);
+}
+
+test "paramsGetInfo returns false for out-of-bounds index" {
+    const Ext = ParamsExtension(TestPluginWithParams);
+    var info: clap.ParamInfo = undefined;
+    try t.expect(!Ext.paramsGetInfo(undefined, 99, &info));
+}
+
+test "paramsGetValue returns default after reset" {
+    const Ext = ParamsExtension(TestPluginWithParams);
+    var instance = TestPluginWithParams{};
+    instance.param_values.reset(TestPluginWithParams.params);
+    var plugin = clap.Plugin{
+        .desc = undefined,
+        .plugin_data = &instance,
+        .init = undefined,
+        .destroy = undefined,
+        .activate = undefined,
+        .deactivate = undefined,
+        .start_processing = undefined,
+        .stop_processing = undefined,
+        .reset = undefined,
+        .process = undefined,
+        .get_extension = undefined,
+        .on_main_thread = undefined,
+    };
+    var value: f64 = undefined;
+    try t.expect(Ext.paramsGetValue(&plugin, 0, &value));
+    try t.expectEqual(@as(f64, 0.5), value);
+}
+
+test "paramsGetValue returns false for unknown param id" {
+    const Ext = ParamsExtension(TestPluginWithParams);
+    var instance = TestPluginWithParams{};
+    var plugin = clap.Plugin{
+        .desc = undefined,
+        .plugin_data = &instance,
+        .init = undefined,
+        .destroy = undefined,
+        .activate = undefined,
+        .deactivate = undefined,
+        .start_processing = undefined,
+        .stop_processing = undefined,
+        .reset = undefined,
+        .process = undefined,
+        .get_extension = undefined,
+        .on_main_thread = undefined,
+    };
+    var value: f64 = undefined;
+    try t.expect(!Ext.paramsGetValue(&plugin, 999, &value));
+}
+
+test "paramsValueToText and paramsTextToValue round-trip" {
+    const Ext = ParamsExtension(TestPluginWithParams);
+    var buf: [64]u8 = undefined;
+    try t.expect(Ext.paramsValueToText(undefined, 0, 0.75, &buf, buf.len));
+    const text = std.mem.sliceTo(&buf, 0);
+    var result: f64 = undefined;
+    try t.expect(Ext.paramsTextToValue(undefined, 0, text.ptr, &result));
+    try t.expectEqual(@as(f64, 0.75), result);
 }
