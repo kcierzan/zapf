@@ -7,13 +7,15 @@ const params_mod = @import("../params.zig");
 const process_mod = @import("../process.zig");
 const plugin_mod = @import("../plugin.zig");
 
-const audio_ports_extension = @import("../adapters/clap_extensions/audio_ports.zig");
+const audio_ports_ext = @import("../adapters/clap_extensions/audio_ports.zig");
+const params_ext = @import("../adapters/clap_extensions/params.zig");
 
 pub fn ClapAdapter(comptime PluginType: type) type {
     return struct {
         const Self = @This();
         const clap_desc = toClapDescriptor(PluginType.descriptor);
-        const audio_ports = audio_ports_extension.AudioPortsExtension(PluginType);
+        const AudioPorts = audio_ports_ext.AudioPortsExtension(PluginType);
+        const Params = params_ext.ParamsExtension(PluginType);
 
         /// The clap_plugin_t instance. Hosts receive a pointer to this.
         fn makePluginVtable(instance: *PluginType) clap.Plugin {
@@ -154,7 +156,14 @@ pub fn ClapAdapter(comptime PluginType: type) type {
         ) callconv(.c) ?*const anyopaque {
             _ = plugin;
             // TODO: add more extensions here
-            if (std.mem.eql(u8, id, audio_ports.extension_name)) return @ptrCast(&audio_ports.ext);
+            const ext_id = std.mem.span(id);
+
+            if (std.mem.eql(u8, ext_id, AudioPorts.extension_name)) {
+                return @ptrCast(&AudioPorts.ext);
+            }
+            if (std.mem.eql(u8, ext_id, Params.extension_name)) {
+                return @ptrCast(&Params.ext);
+            }
             return null;
         }
 
@@ -176,6 +185,7 @@ const TestPlugin = struct {
 
     initialized: bool = false,
     process_count: u32 = 0,
+    param_values: params_mod.ParamValues(params.len) = .{},
 
     pub fn init(self: *TestPlugin, sample_rate: f64) void {
         _ = sample_rate;
@@ -196,6 +206,24 @@ const TestPlugin = struct {
 test "ClapAdapter generates a valid vtable type" {
     const Adapter = ClapAdapter(TestPlugin);
     try t.expectEqual(@TypeOf(Adapter.clap_desc), clap.PluginDescriptor);
+}
+
+test "pluginGetExtension returns audio-ports extension" {
+    const Adapter = ClapAdapter(TestPlugin);
+    const audio_ptr = Adapter.pluginGetExtension(undefined, &clap.EXT_AUDIO_PORTS);
+    try t.expect(audio_ptr != null);
+}
+
+test "pluginGetExtension returns params extension" {
+    const Adapter = ClapAdapter(TestPlugin);
+    const params_ptr = Adapter.pluginGetExtension(undefined, &clap.EXT_PARAMS);
+    try t.expect(params_ptr != null);
+}
+
+test "pluginGetExtension with unknown extension returns null" {
+    const Adapter = ClapAdapter(TestPlugin);
+    const unknown_ptr = Adapter.pluginGetExtension(undefined, "clap.unknown-ext");
+    try t.expectEqual(unknown_ptr, null);
 }
 
 fn toClapProcessResult(comptime result: process_mod.ProcessResult) i32 {

@@ -23,7 +23,9 @@ pub const Param = struct {
 pub fn ParamValues(comptime count: usize) type {
     return struct {
         const Self = @This();
-        values: [count]f64 = undefined,
+        // tricking zls which will substitute 0 for the comptime value `count`
+        // and show errors for indexing into an empty array
+        values: [@max(count, 1)]f64 = undefined,
 
         pub fn reset(self: *Self, comptime param_list: []const Param) void {
             inline for (param_list, 0..) |p, i| {
@@ -36,6 +38,7 @@ pub fn ParamValues(comptime count: usize) type {
         }
 
         pub fn set(self: *Self, index: usize, value: f64, comptime param_list: []const Param) void {
+            if (comptime param_list.len == 0) return;
             self.values[index] = std.math.clamp(value, param_list[index].min, param_list[index].max);
         }
 
