@@ -10,15 +10,28 @@ const plugin_mod = @import("../plugin.zig");
 const audio_ports_ext = @import("../adapters/clap_extensions/audio_ports.zig");
 const params_ext = @import("../adapters/clap_extensions/params.zig");
 
+/// Wrapper that holds the user's plugin instance alongside adapter-owned state
+/// (e.g. sample_rate). Stored in plugin_data so CLAP callbacks can reach both.
+pub fn InstanceData(comptime PluginType: type) type {
+    return struct {
+        plugin: PluginType,
+        sample_rate: f64 = 0,
+    };
+}
+
 pub fn ClapAdapter(comptime PluginType: type) type {
+    const Instance = InstanceData(PluginType);
+
     return struct {
         const Self = @This();
         const clap_desc = toClapDescriptor(PluginType.descriptor);
         const AudioPorts = audio_ports_ext.AudioPortsExtension(PluginType);
         const Params = params_ext.ParamsExtension(PluginType);
 
+        const max_channels = 16;
+
         /// The clap_plugin_t instance. Hosts receive a pointer to this.
-        fn makePluginVtable(instance: *PluginType) clap.Plugin {
+        fn makePluginVtable(instance: *Instance) clap.Plugin {
             return clap.Plugin{
                 .desc = &clap_desc,
                 .plugin_data = instance,
@@ -35,6 +48,10 @@ pub fn ClapAdapter(comptime PluginType: type) type {
             };
         }
 
+        fn getInstance(plugin: [*c]const clap.Plugin) *Instance {
+            return @ptrCast(@alignCast(plugin.*.plugin_data));
+        }
+
         fn pluginInit(plugin: [*c]const clap.Plugin) callconv(.c) bool {
             _ = plugin;
             // NOTE: most setup work happens in activate where we get an actual
@@ -43,14 +60,15 @@ pub fn ClapAdapter(comptime PluginType: type) type {
         }
 
         fn pluginDestroy(plugin: [*c]const clap.Plugin) callconv(.c) void {
-            const instance: *PluginType = @ptrCast(@alignCast(plugin.*.plugin_data));
+            const data = getInstance(plugin);
             if (@hasDecl(PluginType, "deinit")) {
-                instance.deinit();
+                data.plugin.deinit();
             }
             const allocator = std.heap.page_allocator;
-            allocator.destroy(instance);
+            allocator.destroy(data);
             // plugin itself was also heap-allocated in createPlugin
-            allocator.destroy(@constCast(plugin));
+            const plugin_ptr: *const clap.Plugin = @ptrCast(plugin);
+            allocator.destroy(@constCast(plugin_ptr));
         }
 
         fn pluginActivate(
@@ -61,8 +79,9 @@ pub fn ClapAdapter(comptime PluginType: type) type {
         ) callconv(.c) bool {
             _ = min_frames;
             _ = max_frames;
-            const instance: *PluginType = @ptrCast(@alignCast(plugin.*.plugin_data));
-            instance.init(sample_rate);
+            const data = getInstance(plugin);
+            data.sample_rate = sample_rate;
+            data.plugin.init(sample_rate);
             return true;
         }
 
@@ -75,10 +94,14 @@ pub fn ClapAdapter(comptime PluginType: type) type {
             return true;
         }
 
+        fn pluginStopProcessing(plugin: [*c]const clap.Plugin) callconv(.c) void {
+            _ = plugin;
+        }
+
         fn pluginReset(plugin: [*c]const clap.Plugin) callconv(.c) void {
-            const instance: *PluginType = @ptrCast(@alignCast(plugin.*.plugin_data));
+            const data = getInstance(plugin);
             if (@hasDecl(PluginType, "reset")) {
-                instance.reset();
+                data.plugin.reset();
             }
         }
 
@@ -86,7 +109,7 @@ pub fn ClapAdapter(comptime PluginType: type) type {
             plugin: [*c]const clap.Plugin,
             process: [*c]const clap.Process,
         ) callconv(.c) i32 {
-            const instance: *PluginType = @ptrCast(@alignCast(plugin.*.plugin_data));
+            const data = getInstance(plugin);
 
             const p = process.*;
             const frame_count = p.frames_count;
@@ -95,18 +118,20 @@ pub fn ClapAdapter(comptime PluginType: type) type {
             // we should make this a generic behavior to re-use it across adapters
 
             // build input channel slices
-            var input_slices: [16][]const f32 = undefined;
+            var input_slices: [max_channels][]const f32 = undefined;
             var in_channels: u32 = 0;
-            if (p.audio_inputs) |in_buf| {
+            if (p.audio_inputs) |in_ptr| {
+                const in_buf = in_ptr[0];
                 in_channels = in_buf.channel_count;
                 for (0..in_channels) |ch| {
                     input_slices[ch] = in_buf.data32[ch][0..frame_count];
                 }
             }
 
-            var output_slices: [16][]f32 = undefined;
+            var output_slices: [max_channels][]f32 = undefined;
             var out_channels: u32 = 0;
-            if (p.audio_outputs) |out_buf| {
+            if (p.audio_outputs) |out_ptr| {
+                const out_buf = out_ptr[0];
                 out_channels = out_buf.channel_count;
                 for (0..out_channels) |ch| {
                     output_slices[ch] = out_buf.data32[ch][0..frame_count];
@@ -115,7 +140,7 @@ pub fn ClapAdapter(comptime PluginType: type) type {
 
             const in_events: *const clap.InputEvents = p.in_events orelse &empty_input_events;
 
-            params_ext.applyParamEvents(PluginType, instance, in_events);
+            params_ext.applyParamEvents(PluginType, &data.plugin, in_events);
 
             const event_count: u32 = if (in_events.size) |size_fn| size_fn(in_events) else 0;
 
@@ -125,7 +150,7 @@ pub fn ClapAdapter(comptime PluginType: type) type {
                 .input = input_slices[0..in_channels],
                 .output = output_slices[0..out_channels],
                 .frame_count = frame_count,
-                .sample_rate = 0, // filled in from `activate`
+                .sample_rate = data.sample_rate,
                 .steady_time = p.steady_time,
                 .events = ClapEventIterator{
                     .input_events = in_events,
@@ -133,7 +158,7 @@ pub fn ClapAdapter(comptime PluginType: type) type {
                 },
             };
 
-            const result = instance.process(ctx);
+            const result = data.plugin.process(ctx);
             return toClapProcessResult(result);
         }
 
@@ -178,7 +203,7 @@ const TestPlugin = struct {
         self.initialized = true;
     }
 
-    pub fn process(self: *TestPlugin, ctx: anytype) process.ProcessResult {
+    pub fn process(self: *TestPlugin, ctx: anytype) process_mod.ProcessResult {
         _ = ctx;
         self.process_count += 1;
         return .@"continue";
@@ -212,7 +237,7 @@ test "pluginGetExtension with unknown extension returns null" {
     try t.expectEqual(unknown_ptr, null);
 }
 
-fn toClapProcessResult(comptime result: process_mod.ProcessResult) i32 {
+fn toClapProcessResult(result: process_mod.ProcessResult) i32 {
     return switch (result) {
         .@"error" => clap.ProcessResult.ERROR,
         .@"continue" => clap.ProcessResult.CONTINUE,
@@ -301,7 +326,7 @@ const ClapEventIterator = struct {
         return null;
     }
 
-    fn reset(self: *ClapEventIterator) void {
+    pub fn reset(self: *ClapEventIterator) void {
         self.index = 0;
     }
 
@@ -341,6 +366,7 @@ pub fn exportEntry(comptime PluginType: type) void {
     plugin_mod.validatePlugin(PluginType);
 
     const Adapter = ClapAdapter(PluginType);
+    const Instance = InstanceData(PluginType);
 
     const EntryImpl = struct {
         var factory = clap.PluginFactory{
@@ -376,16 +402,14 @@ pub fn exportEntry(comptime PluginType: type) void {
             const id_str = std.mem.span(plugin_id);
             if (!std.mem.eql(u8, id_str, PluginType.descriptor.id)) return null;
 
-            // Allocate a whole page as we can't pass in an allocator here due to clap ABI
-            // constraints
-            const allocator = std.head.page_allocator;
-            const instance = allocator.create(PluginType) catch return null;
+            const allocator = std.heap.page_allocator;
+            const data = allocator.create(Instance) catch return null;
             const clap_plugin = allocator.create(clap.Plugin) catch {
-                allocator.destroy(instance);
+                allocator.destroy(data);
                 return null;
             };
 
-            clap_plugin.* = Adapter.makePluginVtable(instance);
+            clap_plugin.* = Adapter.makePluginVtable(data);
             return clap_plugin;
         }
 
@@ -416,10 +440,75 @@ pub fn exportEntry(comptime PluginType: type) void {
     @export(&EntryImpl.entry, .{ .name = "clap_entry" });
 }
 
-test "exportEntry compiles for a valid plugin" {
+test "makePluginVtable wires all callbacks and they compile" {
     const Adapter = ClapAdapter(TestPlugin);
+    var data = InstanceData(TestPlugin){ .plugin = .{} };
+    const vtable = Adapter.makePluginVtable(&data);
+
+    // Verify descriptor is wired
     try t.expectEqualStrings(
         "com.test.adapter",
-        std.mem.span(Adapter.clap_desc.id),
+        std.mem.span(vtable.desc.*.id),
     );
+
+    // Every callback should be non-null (they're all set in the vtable)
+    try t.expect(vtable.init != null);
+    try t.expect(vtable.destroy != null);
+    try t.expect(vtable.activate != null);
+    try t.expect(vtable.deactivate != null);
+    try t.expect(vtable.start_processing != null);
+    try t.expect(vtable.stop_processing != null);
+    try t.expect(vtable.reset != null);
+    try t.expect(vtable.process != null);
+    try t.expect(vtable.get_extension != null);
+    try t.expect(vtable.on_main_thread != null);
+}
+
+test "pluginInit, pluginStartProcessing, pluginStopProcessing, pluginDeactivate, pluginOnMainThread are callable" {
+    const Adapter = ClapAdapter(TestPlugin);
+    var data = InstanceData(TestPlugin){ .plugin = .{} };
+    var vtable = Adapter.makePluginVtable(&data);
+
+    // These are no-op stubs but we confirm they compile and don't crash
+    try t.expect(vtable.init.?(&vtable));
+    try t.expect(vtable.start_processing.?(&vtable));
+    vtable.stop_processing.?(&vtable);
+    vtable.deactivate.?(&vtable);
+    vtable.on_main_thread.?(&vtable);
+}
+
+test "pluginActivate stores sample_rate and calls init" {
+    const Adapter = ClapAdapter(TestPlugin);
+    var data = InstanceData(TestPlugin){ .plugin = .{} };
+    var vtable = Adapter.makePluginVtable(&data);
+
+    try t.expect(!data.plugin.initialized);
+    try t.expectEqual(@as(f64, 0), data.sample_rate);
+
+    try t.expect(vtable.activate.?(&vtable, 48000.0, 64, 1024));
+
+    try t.expect(data.plugin.initialized);
+    try t.expectEqual(@as(f64, 48000.0), data.sample_rate);
+}
+
+test "pluginReset delegates to plugin reset" {
+    const Adapter = ClapAdapter(TestPlugin);
+    var data = InstanceData(TestPlugin){ .plugin = .{} };
+    var vtable = Adapter.makePluginVtable(&data);
+
+    data.plugin.process_count = 42;
+    vtable.reset.?(&vtable);
+    try t.expectEqual(@as(u32, 0), data.plugin.process_count);
+}
+
+test "ClapEventIterator satisfies isEventIterator" {
+    try t.expect(events.isEventIterator(ClapEventIterator));
+}
+
+test "ClapEventIterator returns null for empty event list" {
+    var iter = ClapEventIterator{
+        .input_events = &empty_input_events,
+        .count = 0,
+    };
+    try t.expectEqual(iter.next(), null);
 }
