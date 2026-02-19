@@ -113,15 +113,11 @@ pub fn ClapAdapter(comptime PluginType: type) type {
                 }
             }
 
-            const in_events = p.in_events;
-            if (in_events) |ie| {
-                params_ext.applyParamEvents(PluginType, instance, ie);
-            }
+            const in_events: *const clap.InputEvents = p.in_events orelse &empty_input_events;
 
-            const event_count: u32 = if (in_events) |ie|
-                if (ie.size) |size_fn| size_fn(ie) else 0
-            else
-                0;
+            params_ext.applyParamEvents(PluginType, instance, in_events);
+
+            const event_count: u32 = if (in_events.size) |size_fn| size_fn(in_events) else 0;
 
             // Construct the generic ProcessContext - ClapEventIterator skips param events
             const Context = process_mod.ProcessContext(ClapEventIterator);
@@ -132,7 +128,7 @@ pub fn ClapAdapter(comptime PluginType: type) type {
                 .sample_rate = 0, // filled in from `activate`
                 .steady_time = p.steady_time,
                 .events = ClapEventIterator{
-                    .input_events = in_events.?,
+                    .input_events = in_events,
                     .count = event_count,
                 },
             };
@@ -282,6 +278,12 @@ test "toClapDescriptor converts fields correctly" {
     // Check features array is null-terminated
     try t.expect(clap_desc.features[2] == null);
 }
+
+const empty_input_events = clap.InputEvents{
+    .ctx = null,
+    .size = null,
+    .get = null,
+};
 
 const ClapEventIterator = struct {
     input_events: *const clap.InputEvents,
