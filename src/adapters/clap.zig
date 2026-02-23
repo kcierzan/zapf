@@ -1,14 +1,13 @@
 const std = @import("std");
 const t = std.testing;
 
+const audio_ports_ext = @import("../adapters/clap_extensions/audio_ports.zig");
+const params_ext = @import("../adapters/clap_extensions/params.zig");
 const clap = @import("../api/clap.zig");
 const events = @import("../events.zig");
 const params_mod = @import("../params.zig");
-const process_mod = @import("../process.zig");
 const plugin_mod = @import("../plugin.zig");
-
-const audio_ports_ext = @import("../adapters/clap_extensions/audio_ports.zig");
-const params_ext = @import("../adapters/clap_extensions/params.zig");
+const process_mod = @import("../process.zig");
 
 /// Wrapper that holds the user's plugin instance alongside adapter-owned state
 /// (e.g. sample_rate). Stored in plugin_data so CLAP callbacks can reach both.
@@ -377,7 +376,7 @@ pub fn exportEntry(comptime PluginType: type) void {
 
         const Self = @This();
 
-        fn getPluginCount(f: [*c]clap.PluginFactory) callconv(.c) u32 {
+        fn getPluginCount(f: [*c]const clap.PluginFactory) callconv(.c) u32 {
             _ = f;
             // NOTE: we do not support multi-plugin clap bundles for now
             return 1; // single-plugin library

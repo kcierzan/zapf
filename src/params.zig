@@ -33,17 +33,19 @@ pub fn ParamValues(comptime count: usize) type {
             }
         }
 
-        pub fn get(self: *const Self, index: usize) f64 {
-            if (comptime count == 0) unreachable;
+        pub fn getById(self: *const Self, comptime param_list: []const Param, id: u32) ?f64 {
+            const index = indexFromId(param_list, id) orelse return null;
             return self.values[index];
         }
 
-        pub fn set(self: *Self, index: usize, value: f64, comptime param_list: []const Param) void {
-            if (comptime param_list.len == 0) return;
+        pub fn setById(self: *Self, comptime param_list: []const Param, id: u32, value: f64) bool {
+            if (comptime param_list.len == 0) return false;
+            const index = indexFromId(param_list, id) orelse return false;
             self.values[index] = std.math.clamp(value, param_list[index].min, param_list[index].max);
+            return true;
         }
 
-        pub fn indexFromId(comptime param_list: []const Param, id: u32) ?usize {
+        fn indexFromId(comptime param_list: []const Param, id: u32) ?usize {
             inline for (param_list, 0..) |p, i| {
                 if (p.id == id) return i;
             }
@@ -74,29 +76,29 @@ test "ParamValues reset defaults" {
     var vals: ParamValues(test_params.len) = .{};
     vals.reset(test_params);
 
-    try t.expectEqual(@as(f64, 0.5), vals.get(0));
-    try t.expectEqual(@as(f64, 0.0), vals.get(1));
+    try t.expectEqual(@as(?f64, 0.5), vals.getById(test_params, 0));
+    try t.expectEqual(@as(?f64, 0.0), vals.getById(test_params, 1));
 }
 
-test "ParamValues set clamps to range" {
+test "ParamValues getById returns null for unknown ID" {
     var vals: ParamValues(test_params.len) = .{};
     vals.reset(test_params);
 
-    vals.set(0, 5.0, test_params); // max is 1.0
-    try t.expectEqual(@as(f64, 1.0), vals.get(0));
-
-    vals.set(1, -10.0, test_params); // min is -1.0
-    try t.expectEqual(@as(f64, -1.0), vals.get(1));
+    try t.expectEqual(@as(?f64, null), vals.getById(test_params, 10));
 }
 
-test "ParamValues indexFromId finds correct index" {
-    const idx = ParamValues(test_params.len).indexFromId(test_params, 1);
-    try t.expectEqual(@as(?usize, 1), idx);
-}
+test "ParamValues setById sets and clamps value" {
+    var vals: ParamValues(test_params.len) = .{};
+    vals.reset(test_params);
 
-test "ParamValues indexFromId returns null for unknown ID" {
-    const idx = ParamValues(test_params.len).indexFromId(test_params, 10);
-    try t.expectEqual(@as(?usize, null), idx);
+    try t.expect(vals.setById(test_params, 0, 5.0));
+    try t.expectEqual(@as(?f64, 1.0), vals.getById(test_params, 0));
+
+    vals.reset(test_params);
+    try t.expect(vals.setById(test_params, 1, -10.0));
+    try t.expectEqual(@as(?f64, -1.0), vals.getById(test_params, 1));
+
+    try t.expect(!vals.setById(test_params, 99, 1.0));
 }
 
 test "ParamFlags defaults are all false" {

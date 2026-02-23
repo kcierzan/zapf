@@ -1,4 +1,4 @@
-//! We aren't include a ParamEvent type here because we intend to apply
+//! We aren't including a ParamEvent type here because we intend to apply
 //! param changes to values at the adapter level automatically. This should
 //! lighten the load a bit on framework consumers who would otherwise need
 //! to do some version of this manually. Given the divergences in param

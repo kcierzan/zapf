@@ -69,9 +69,7 @@ pub fn ParamsExtension(comptime PluginType: type) type {
             out_value: [*c]f64,
         ) callconv(.c) bool {
             const data: *Instance = @ptrCast(@alignCast(plugin.*.plugin_data));
-            const PV = params_mod.ParamValues(PluginType.params.len);
-            const idx = PV.indexFromId(PluginType.params, param_id) orelse return false;
-            out_value.* = data.plugin.param_values.get(idx);
+            out_value.* = data.plugin.param_values.getById(PluginType.params, param_id) orelse return false;
             return true;
         }
 
@@ -128,10 +126,7 @@ pub fn applyParamEvents(comptime PluginType: type, instance: *PluginType, ie: *c
             header.type == clap.Event.EVENT_PARAM_VALUE)
         {
             const ev: *const clap.EventParam = @ptrCast(@alignCast(header));
-            const PV = params_mod.ParamValues(PluginType.params.len);
-            if (PV.indexFromId(PluginType.params, ev.param_id)) |idx| {
-                instance.param_values.set(idx, ev.value, PluginType.params);
-            }
+            _ = instance.param_values.setById(PluginType.params, ev.param_id, ev.value);
         }
     }
 }
@@ -272,6 +267,6 @@ test "applyParamEvents is a no-op with null function pointers" {
     };
     // should return early without touching param values
     applyParamEvents(TestPluginWithParams, &instance, &empty);
-    try t.expectEqual(@as(f64, 0.5), instance.param_values.get(0));
-    try t.expectEqual(@as(f64, 0.0), instance.param_values.get(1));
+    try t.expectEqual(@as(?f64, 0.5), instance.param_values.getById(TestPluginWithParams.params, 0));
+    try t.expectEqual(@as(?f64, 0.0), instance.param_values.getById(TestPluginWithParams.params, 1));
 }
