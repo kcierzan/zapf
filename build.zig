@@ -158,15 +158,72 @@ pub fn build(b: *std.Build) void {
     check_step.dependOn(&lib.step);
     check_step.dependOn(&mod_tests.step);
 
-    // Just like flags, top level steps are also listed in the `--help` menu.
-    //
-    // The Zig build system is entirely implemented in userland, which means
-    // that it cannot hook into private compiler APIs. All compilation work
-    // orchestrated by the build system will result in other Zig compiler
-    // subcommands being invoked with the right flags defined. You can observe
-    // these invocations when one fails (or you pass a flag to increase
-    // verbosity) to validate assumptions and diagnose problems.
-    //
-    // Lastly, the Zig build system is relatively simple and self-contained,
-    // and reading its source code will allow you to master it.
+    // Build example gain plugin as a macOS CLAP bundle
+    const gain_plugin = b.addLibrary(.{
+        .name = "gain",
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/gain.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{
+                .{ .name = "zapf", .module = mod },
+            },
+        }),
+    });
+
+    // Generate Info.plist for the CLAP bundle
+    const wf = b.addWriteFiles();
+    const plist = wf.add("Info.plist",
+        \\<?xml version="1.0" encoding="UTF-8"?>
+        \\<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+        \\  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        \\<plist version="1.0">
+        \\<dict>
+        \\  <key>CFBundleExecutable</key>
+        \\  <string>gain</string>
+        \\  <key>CFBundleIdentifier</key>
+        \\  <string>com.example.gain</string>
+        \\  <key>CFBundleName</key>
+        \\  <string>Zapf Example Gain</string>
+        \\  <key>CFBundleVersion</key>
+        \\  <string>0.1.0</string>
+        \\  <key>CFBundlePackageType</key>
+        \\  <string>BNDL</string>
+        \\</dict>
+        \\</plist>
+        \\
+    );
+
+    // Assemble the .clap bundle: zig-out/gain.clap/Contents/{MacOS/gain, Info.plist}
+    const install_bin = b.addInstallFileWithDir(
+        gain_plugin.getEmittedBin(),
+        .prefix,
+        "gain.clap/Contents/MacOS/gain",
+    );
+    const install_plist = b.addInstallFileWithDir(
+        plist,
+        .prefix,
+        "gain.clap/Contents/Info.plist",
+    );
+
+    const bundle_step = b.step("bundle", "Build CLAP plugin bundle");
+    bundle_step.dependOn(&install_bin.step);
+    bundle_step.dependOn(&install_plist.step);
+
+    // `zig build install` — symlink the bundle into ~/Library/Audio/Plug-Ins/CLAP/
+    // FIXME: this is totally macOS dependent
+    const clap_dir = "Library/Audio/Plug-Ins/CLAP";
+    const home = std.process.getEnvVarOwned(b.allocator, "HOME") catch "/tmp";
+    const dest = b.pathJoin(&.{ home, clap_dir, "gain.clap" });
+    const source = b.pathJoin(&.{ b.install_path, "gain.clap" });
+
+    const mkdir = b.addSystemCommand(&.{ "mkdir", "-p", b.pathJoin(&.{ home, clap_dir }) });
+    const symlink = b.addSystemCommand(&.{ "ln", "-sfn", source, dest });
+    symlink.step.dependOn(&mkdir.step);
+    symlink.step.dependOn(bundle_step);
+
+    const install_step = b.step("install-plugin", "Symlink CLAP bundle into ~/Library/Audio/Plug-Ins/CLAP/");
+    install_step.dependOn(&symlink.step);
 }
