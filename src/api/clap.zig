@@ -27,13 +27,19 @@ pub const PluginEntry = c.clap_plugin_entry_t;
 pub const PluginFactory = c.clap_plugin_factory_t;
 pub const PluginParams = c.clap_plugin_params_t;
 pub const Process = c.clap_process_t;
+pub const State = c.clap_plugin_state_t;
 pub const UniversalPluginId = c.clap_universal_plugin_id_t;
 pub const Version = c.clap_version_t;
+pub const Stream = struct {
+    pub const Istream = c.clap_istream_t;
+    pub const Ostream = c.clap_ostream_t;
+};
 
 pub const AUDIO_PORT_IS_MAIN = c.CLAP_AUDIO_PORT_IS_MAIN;
 pub const CORE_EVENT_SPACE_ID = c.CLAP_CORE_EVENT_SPACE_ID;
 pub const EXT_AUDIO_PORTS = c.CLAP_EXT_AUDIO_PORTS;
 pub const EXT_PARAMS = c.CLAP_EXT_PARAMS;
+pub const EXT_STATE = c.CLAP_EXT_STATE;
 pub const INVALID_ID = std.math.maxInt(u32);
 pub const Id = u32;
 

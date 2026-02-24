@@ -22,7 +22,7 @@ pub fn MockHost(comptime PluginType: type) type {
 
         pub fn init(sample_rate: f64) Self {
             var host = Self{
-                .plugin = undefined,
+                .plugin = .{},
                 .sample_rate = sample_rate,
                 .input_buffers = [_][max_frames]f32{[_]f32{0.0} ** max_frames} ** max_channels,
                 .output_buffers = [_][max_frames]f32{[_]f32{0.0} ** max_frames} ** max_channels,
@@ -89,24 +89,29 @@ const GainTestPlugin = struct {
         .version = "1.0.0",
     };
 
-    pub const params = &[_]params_mod.Param{
-        .{ .id = 0, .name = "Gain", .min = 0.0, .max = 1.0, .default = 0.5 },
-    };
-
     pub const audio_ports = audio_mod.AudioPortConfig{
         .input_channels = 2,
         .output_channels = 2,
     };
 
-    param_values: params_mod.ParamValues(params.len) = .{},
+    params: Params = .{},
+
+    const Params = struct {
+        gain: params_mod.Float(.{
+            .name = "Gain",
+            .min = 0.0,
+            .max = 1.0,
+            .default = 0.5,
+        }) = .{},
+    };
 
     pub fn init(self: *GainTestPlugin, sample_rate: f64) void {
+        _ = self;
         _ = sample_rate;
-        self.param_values.reset(params);
     }
 
     pub fn process(self: *GainTestPlugin, ctx: anytype) process_mod.ProcessResult {
-        const gain: f32 = @floatCast(self.param_values.getById(params, 0) orelse 1.0);
+        const gain = self.params.gain.get();
         const frames = ctx.frame_count;
         for (0..frames) |i| {
             ctx.output[0][i] = ctx.input[0][i] * gain;
@@ -116,7 +121,7 @@ const GainTestPlugin = struct {
     }
 
     pub fn reset(self: *GainTestPlugin) void {
-        self.param_values.reset(params);
+        self.params.gain.reset();
     }
 };
 
