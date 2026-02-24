@@ -36,3 +36,6 @@ jobs:
 
       - name: Run build
         run: zig build --summary all
+
+      - name: Build examples
+        run: zig build bundle --summary all
