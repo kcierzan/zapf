@@ -11,9 +11,10 @@ pub const PluginDescriptor = plugin.PluginDescriptor;
 // TODO: we probably want a generic plugin features module rather
 // than exposing CLAP values directly
 pub const PluginFeatures = clap.PluginFeatures;
-pub const Param = params_mod.Param;
+pub const Float = params_mod.Float;
+pub const ParamOpts = params_mod.ParamOpts;
+pub const ParamFlags = params_mod.ParamFlags;
 pub const AudioPortConfig = audio_mod.AudioPortConfig;
-pub const ParamValues = params_mod.ParamValues;
 pub const ProcessContext = process_mod.ProcessContext;
 pub const ProcessResult = process_mod.ProcessResult;
 pub const exportClapPlugin = clap_adapter.exportEntry;

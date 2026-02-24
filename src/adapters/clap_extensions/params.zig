@@ -5,6 +5,20 @@ const params_mod = @import("../../params.zig");
 const plugin_mod = @import("../../plugin.zig");
 const adapter = @import("../clap.zig");
 
+const discoverParams = params_mod.discoverParams;
+const Float = params_mod.Float;
+
+fn flagsToClap(flags: params_mod.ParamFlags) u32 {
+    var result: u32 = 0;
+    if (flags.automatable) result |= clap.ParamMasks.AUTOMATABLE;
+    if (flags.modulatable) result |= clap.ParamMasks.MODULATABLE;
+    if (flags.stepped) result |= clap.ParamMasks.STEPPED;
+    if (flags.hidden) result |= clap.ParamMasks.HIDDEN;
+    if (flags.readonly) result |= clap.ParamMasks.READONLY;
+    if (flags.bypass) result |= clap.ParamMasks.BYPASS;
+    return result;
+}
+
 pub fn ParamsExtension(comptime PluginType: type) type {
     const Instance = adapter.InstanceData(PluginType);
 
@@ -22,7 +36,8 @@ pub fn ParamsExtension(comptime PluginType: type) type {
 
         fn paramsCount(plugin: [*c]const clap.Plugin) callconv(.c) u32 {
             _ = plugin;
-            return PluginType.params.len;
+            const discovered = comptime discoverParams(@TypeOf(@as(PluginType, undefined).params));
+            return discovered.len;
         }
 
         fn paramsGetInfo(
@@ -31,36 +46,27 @@ pub fn ParamsExtension(comptime PluginType: type) type {
             info: [*c]clap.ParamInfo,
         ) callconv(.c) bool {
             _ = plugin;
-            if (param_index >= PluginType.params.len) return false;
-            const param = PluginType.params[param_index];
+            const discovered = comptime discoverParams(@TypeOf(@as(PluginType, undefined).params));
+            if (param_index >= discovered.len) return false;
 
-            comptime {
-                const name_capacity = @typeInfo(@TypeOf(@as(clap.ParamInfo, undefined).name)).array.len;
-                const module_capacity = @typeInfo(@TypeOf(@as(clap.ParamInfo, undefined).module)).array.len;
-                for (PluginType.params) |p| {
-                    if (p.name.len >= name_capacity)
-                        @compileError("param name '" ++ p.name ++ "' exceeds CLAP_NAME_SIZE");
-                    if (p.module.len >= module_capacity)
-                        @compileError("param module '" ++ p.module ++ "' exceeds CLAP_PATH_SIZE");
+            comptime var idx: u32 = 0;
+
+            inline for (discovered) |d| {
+                if (idx == param_index) {
+                    info.*.id = d.id;
+                    info.*.min_value = d.meta.min;
+                    info.*.max_value = d.meta.max;
+                    info.*.default_value = d.meta.default;
+                    info.*.flags = flagsToClap(d.meta.flags);
+                    @memcpy(info.*.name[0..d.meta.name.len], d.meta.name);
+                    info.*.name[d.meta.name.len] = 0;
+                    @memcpy(info.*.module[0..d.meta.module.len], d.meta.module);
+                    info.*.module[d.meta.module.len] = 0;
+                    return true;
                 }
+                idx += 1;
             }
-
-            info.*.id = param.id;
-            info.*.min_value = param.min;
-            info.*.max_value = param.max;
-            info.*.default_value = param.default;
-            info.*.flags = 0;
-            if (param.flags.automatable) info.*.flags |= clap.ParamMasks.AUTOMATABLE;
-            if (param.flags.modulatable) info.*.flags |= clap.ParamMasks.MODULATABLE;
-            if (param.flags.stepped) info.*.flags |= clap.ParamMasks.STEPPED;
-            if (param.flags.hidden) info.*.flags |= clap.ParamMasks.HIDDEN;
-            if (param.flags.readonly) info.*.flags |= clap.ParamMasks.READONLY;
-            if (param.flags.bypass) info.*.flags |= clap.ParamMasks.BYPASS;
-            @memcpy(info.*.name[0..param.name.len], param.name);
-            info.*.name[param.name.len] = 0;
-            @memcpy(info.*.module[0..param.module.len], param.module);
-            info.*.module[param.module.len] = 0;
-            return true;
+            return false;
         }
 
         fn paramsGetValue(
@@ -68,9 +74,18 @@ pub fn ParamsExtension(comptime PluginType: type) type {
             param_id: u32,
             out_value: [*c]f64,
         ) callconv(.c) bool {
-            const data: *Instance = @ptrCast(@alignCast(plugin.*.plugin_data));
-            out_value.* = data.plugin.param_values.getById(PluginType.params, param_id) orelse return false;
-            return true;
+            const data: *Instance = getInstance(plugin);
+            const discovered = comptime discoverParams(
+                @TypeOf(@as(PluginType, undefined).params),
+            );
+
+            inline for (discovered) |d| {
+                if (d.id == param_id) {
+                    out_value.* = @field(&data.plugin.params, d.field_name).getRaw();
+                    return true;
+                }
+            }
+            return false;
         }
 
         fn paramsValueToText(
@@ -112,6 +127,10 @@ pub fn ParamsExtension(comptime PluginType: type) type {
             const ie: *const clap.InputEvents = in_events orelse return;
             applyParamEvents(PluginType, &data.plugin, ie);
         }
+
+        fn getInstance(plugin: [*c]const clap.Plugin) *Instance {
+            return @ptrCast(@alignCast(plugin.*.plugin_data));
+        }
     };
 }
 
@@ -120,13 +139,21 @@ pub fn applyParamEvents(comptime PluginType: type, instance: *PluginType, ie: *c
     const get_fn = ie.*.get orelse return;
     const event_count = size_fn(ie);
 
+    const discovered = comptime discoverParams(
+        @TypeOf(@as(PluginType, undefined).params),
+    );
+
     for (0..event_count) |i| {
         const header: *const clap.EventHeader = get_fn(ie, @intCast(i));
         if (header.space_id == clap.CORE_EVENT_SPACE_ID and
             header.type == clap.Event.EVENT_PARAM_VALUE)
         {
             const ev: *const clap.EventParam = @ptrCast(@alignCast(header));
-            _ = instance.param_values.setById(PluginType.params, ev.param_id, ev.value);
+            inline for (discovered) |d| {
+                if (d.id == ev.param_id) {
+                    @field(&instance.params, d.field_name).set(ev.value);
+                }
+            }
         }
     }
 }
@@ -139,17 +166,28 @@ const TestPluginWithParams = struct {
         .version = "1.0.0",
     };
 
-    pub const params = &[_]params_mod.Param{
-        .{ .id = 0, .name = "Gain", .min = 0.0, .max = 1.0, .default = 0.5, .flags = .{ .automatable = true } },
-        .{ .id = 1, .name = "Pain", .min = -1.0, .max = 1.0, .default = 0.0 },
+    params: Params = .{},
+
+    const Params = struct {
+        gain: Float(.{
+            .name = "Gain",
+            .min = 0.0,
+            .default = 0.5,
+            .flags = .{ .automatable = true },
+        }) = .{},
+        pan: Float(.{
+            .name = "Pan",
+            .min = -1.0,
+            .max = 1.0,
+            .default = 0.0,
+        }) = .{},
     };
+
     pub const audio_ports = @import("../../audio.zig").AudioPortConfig{};
 
-    param_values: params_mod.ParamValues(params.len) = .{},
-
     pub fn init(self: *@This(), sample_rate: f64) void {
+        _ = self;
         _ = sample_rate;
-        self.param_values.reset(params);
     }
 
     pub fn process(self: *@This(), ctx: anytype) @import("../../process.zig").ProcessResult {
@@ -165,7 +203,7 @@ test "params extension reports correct count" {
 }
 
 const TestPluginEmpty = struct {
-    pub const params = &[_]params_mod.Param{};
+    params: struct {} = .{},
 };
 
 test "params extension reports 0 for no params" {
@@ -177,7 +215,7 @@ test "paramsGetInfo populates name, range, default, and flags" {
     const Ext = ParamsExtension(TestPluginWithParams);
     var info: clap.ParamInfo = undefined;
     try t.expect(Ext.paramsGetInfo(undefined, 0, &info));
-    try t.expectEqual(@as(u32, 0), info.id);
+    try t.expectEqual(comptime params_mod.hashFieldName("gain"), info.id);
     try t.expectEqual(@as(f64, 0.0), info.min_value);
     try t.expectEqual(@as(f64, 1.0), info.max_value);
     try t.expectEqual(@as(f64, 0.5), info.default_value);
@@ -208,13 +246,12 @@ fn makeTestPlugin(data: *adapter.InstanceData(TestPluginWithParams)) clap.Plugin
     };
 }
 
-test "paramsGetValue returns default after reset" {
+test "paramsGetValue returns default after init" {
     const Ext = ParamsExtension(TestPluginWithParams);
     var data = adapter.InstanceData(TestPluginWithParams){ .plugin = .{} };
-    data.plugin.param_values.reset(TestPluginWithParams.params);
     var plugin = makeTestPlugin(&data);
     var value: f64 = undefined;
-    try t.expect(Ext.paramsGetValue(&plugin, 0, &value));
+    try t.expect(Ext.paramsGetValue(&plugin, comptime params_mod.hashFieldName("gain"), &value));
     try t.expectEqual(@as(f64, 0.5), value);
 }
 
@@ -259,7 +296,6 @@ test "paramsValueToText returns false when buffer is too small for value" {
 
 test "applyParamEvents is a no-op with null function pointers" {
     var instance = TestPluginWithParams{};
-    instance.param_values.reset(TestPluginWithParams.params);
     const empty = clap.InputEvents{
         .ctx = null,
         .size = null,
@@ -267,6 +303,6 @@ test "applyParamEvents is a no-op with null function pointers" {
     };
     // should return early without touching param values
     applyParamEvents(TestPluginWithParams, &instance, &empty);
-    try t.expectEqual(@as(?f64, 0.5), instance.param_values.getById(TestPluginWithParams.params, 0));
-    try t.expectEqual(@as(?f64, 0.0), instance.param_values.getById(TestPluginWithParams.params, 1));
+    try t.expectEqual(@as(f64, 0.5), instance.params.gain.getRaw());
+    try t.expectEqual(@as(f64, 0.0), instance.params.pan.getRaw());
 }

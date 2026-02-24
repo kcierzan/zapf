@@ -190,12 +190,11 @@ const TestPlugin = struct {
         .vendor = "test",
         .version = "1.0.0",
     };
-    pub const params = &[_]params_mod.Param{};
     pub const audio_ports = @import("../audio.zig").AudioPortConfig{};
 
+    params: struct {} = .{},
     initialized: bool = false,
     process_count: u32 = 0,
-    param_values: params_mod.ParamValues(params.len) = .{},
 
     pub fn init(self: *TestPlugin, sample_rate: f64) void {
         _ = sample_rate;

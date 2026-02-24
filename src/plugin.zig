@@ -21,12 +21,24 @@ pub fn validatePlugin(comptime T: type) void {
         @compileError("Plugin must be a struct, got " ++ @typeName(T));
     }
 
-    const required = .{ "descriptor", "params", "audio_ports", "init", "process" };
-    inline for (required) |name| {
-        if (!@hasDecl(T, name)) {
-            @compileError("Plugin '" ++ @typeName(T) ++ "' missing required declaration '" ++ name ++ "'");
-        }
-    }
+    if (!@hasDecl(T, "descriptor"))
+        @compileError("Plugin '" ++ @typeName(T) ++ "' missing required declaration 'descriptor'");
+
+    if (!@hasDecl(T, "audio_ports"))
+        @compileError("Plugin '" ++ @typeName(T) ++ "' missing required declaration 'audio_ports'");
+
+    if (!@hasField(T, "params"))
+        @compileError("Plugin '" ++ @typeName(T) ++ "' missing required field 'params'");
+
+    // Validate param fields and check for ID collisions
+    const ParamsType = @TypeOf(@as(T, undefined).params);
+    _ = params_mod.discoverParams(ParamsType);
+
+    if (!@hasDecl(T, "init"))
+        @compileError("Plugin '" ++ @typeName(T) ++ "' missing required declaration 'init'");
+
+    if (!@hasDecl(T, "process"))
+        @compileError("Plugin '" ++ @typeName(T) ++ "' missing required declaration 'process'");
 }
 
 test "PluginDescriptor can be created at comptime" {
@@ -65,8 +77,9 @@ const ValidPlugin = struct {
         .vendor = "Test",
         .version = "1.0.0",
     };
-    pub const params = &[_]params_mod.Param{};
     pub const audio_ports = audio.AudioPortConfig{};
+
+    params: struct {} = .{},
 
     pub fn init(self: *ValidPlugin, sample_rate: f64) void {
         _ = self;

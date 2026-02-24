@@ -10,95 +10,101 @@ pub const ParamFlags = struct {
     bypass: bool = false,
 };
 
-pub const Param = struct {
-    id: u32,
+pub const ParamOpts = struct {
     name: [:0]const u8,
     module: [:0]const u8 = "",
     min: f64 = 0.0,
-    max: f64 = 0.0,
+    max: f64 = 1.0,
     default: f64 = 0.0,
     flags: ParamFlags = .{},
+    id: ?u32 = null,
 };
 
-pub fn ParamValues(comptime count: usize) type {
+pub fn Float(comptime opts: ParamOpts) type {
     return struct {
-        const Self = @This();
-        // tricking zls which will substitute 0 for the comptime value `count`
-        // and show errors for indexing into an empty array
-        values: [@max(count, 1)]f64 = undefined,
+        value: std.atomic.Value(f64) = .{ .raw = opts.default },
 
-        pub fn reset(self: *Self, comptime param_list: []const Param) void {
-            inline for (param_list, 0..) |p, i| {
-                self.values[i] = p.default;
-            }
+        pub const param_meta: ParamOpts = opts;
+
+        pub fn get(self: *const @This()) f32 {
+            // intentionally defaulting to a loss of precision here as
+            // f32 is more common in DSP code
+            return @floatCast(self.value.load(.monotonic));
         }
 
-        pub fn getById(self: *const Self, comptime param_list: []const Param, id: u32) ?f64 {
-            const index = indexFromId(param_list, id) orelse return null;
-            return self.values[index];
+        pub fn set(self: *@This(), v: f64) void {
+            self.value.store(std.math.clamp(v, opts.min, opts.max), .monotonic);
         }
 
-        pub fn setById(self: *Self, comptime param_list: []const Param, id: u32, value: f64) bool {
-            if (comptime param_list.len == 0) return false;
-            const index = indexFromId(param_list, id) orelse return false;
-            self.values[index] = std.math.clamp(value, param_list[index].min, param_list[index].max);
-            return true;
+        pub fn reset(self: *@This()) void {
+            self.value.store(opts.default, .monotonic);
         }
 
-        fn indexFromId(comptime param_list: []const Param, id: u32) ?usize {
-            inline for (param_list, 0..) |p, i| {
-                if (p.id == id) return i;
-            }
-            return null;
+        pub fn getRaw(self: *const @This()) f64 {
+            return self.value.load(.monotonic);
         }
     };
 }
 
-const test_params = &[_]Param{
-    .{
-        .id = 0,
-        .name = "Gain",
-        .min = 0.0,
-        .max = 1.0,
-        .default = 0.5,
-        .flags = .{ .automatable = true },
-    },
-    .{
-        .id = 1,
-        .name = "Pan",
-        .min = -1.0,
-        .max = 1.0,
-        .default = 0.0,
-    },
+pub const DiscoveredParam = struct {
+    id: u32,
+    field_name: [:0]const u8,
+    meta: ParamOpts,
 };
 
-test "ParamValues reset defaults" {
-    var vals: ParamValues(test_params.len) = .{};
-    vals.reset(test_params);
+pub fn discoverParams(comptime ParamsType: type) []const DiscoveredParam {
+    comptime {
+        const fields = std.meta.fields(ParamsType);
 
-    try t.expectEqual(@as(?f64, 0.5), vals.getById(test_params, 0));
-    try t.expectEqual(@as(?f64, 0.0), vals.getById(test_params, 1));
+        var count: usize = 0;
+        for (fields) |field| {
+            if (@typeInfo(field.type) == .@"struct" and @hasDecl(field.type, "param_meta")) {
+                count += 1;
+            }
+        }
+
+        var result: [count]DiscoveredParam = undefined;
+        var i: usize = 0;
+        for (fields) |field| {
+            if (@typeInfo(field.type) == .@"struct" and @hasDecl(field.type, "param_meta")) {
+                const meta: ParamOpts = field.type.param_meta;
+                const id = meta.id orelse hashFieldName(field.name);
+
+                result[i] = .{
+                    .id = id,
+                    .field_name = field.name,
+                    .meta = meta,
+                };
+                i += 1;
+            }
+        }
+
+        for (0..count) |a| {
+            for (a + 1..count) |b| {
+                if (result[a].id == result[b].id) {
+                    @compileError("param ID collision between '" ++
+                        result[a].field_name ++ "' and '" ++
+                        result[b].field_name ++ "' (both resolve to ID " ++
+                        std.fmt.comptimePrint("{d}", .{result[a].id}) ++ ")");
+                }
+            }
+        }
+
+        return &result;
+    }
 }
 
-test "ParamValues getById returns null for unknown ID" {
-    var vals: ParamValues(test_params.len) = .{};
-    vals.reset(test_params);
-
-    try t.expectEqual(@as(?f64, null), vals.getById(test_params, 10));
-}
-
-test "ParamValues setById sets and clamps value" {
-    var vals: ParamValues(test_params.len) = .{};
-    vals.reset(test_params);
-
-    try t.expect(vals.setById(test_params, 0, 5.0));
-    try t.expectEqual(@as(?f64, 1.0), vals.getById(test_params, 0));
-
-    vals.reset(test_params);
-    try t.expect(vals.setById(test_params, 1, -10.0));
-    try t.expectEqual(@as(?f64, -1.0), vals.getById(test_params, 1));
-
-    try t.expect(!vals.setById(test_params, 99, 1.0));
+/// Deterministic hash of a field name to a u32 param ID.
+/// FNV-1a: fast, non-cryptographic, good distribution for short strings
+pub fn hashFieldName(comptime name: [:0]const u8) u32 {
+    comptime {
+        var h: u32 = 2166136261; // FNV offset basis
+        for (name) |byte| {
+            h ^= byte;
+            h *%= 16777619; // FNV prime
+        }
+        return h;
+    }
 }
 
 test "ParamFlags defaults are all false" {
@@ -106,4 +112,73 @@ test "ParamFlags defaults are all false" {
     try t.expect(!flags.automatable);
     try t.expect(!flags.modulatable);
     try t.expect(!flags.stepped);
+}
+
+test "Float default initialization" {
+    var gain: Float(.{ .name = "Gain", .default = 0.5 }) = .{};
+    try t.expectEqual(@as(f64, 0.5), gain.getRaw());
+    try t.expectEqual(@as(f32, 0.5), gain.get());
+}
+
+test "Float set clamps to range" {
+    var gain: Float(.{ .name = "Gain", .min = 0.0, .max = 1.0, .default = 0.5 }) = .{};
+    gain.set(5.0);
+    try t.expectEqual(@as(f64, 1.0), gain.getRaw());
+    gain.set(-1.0);
+    try t.expectEqual(@as(f64, 0.0), gain.getRaw());
+}
+
+test "Float reset restores default" {
+    var gain: Float(.{ .name = "Gain", .default = 0.5 }) = .{};
+    gain.set(0.9);
+    try t.expectEqual(@as(f64, 0.9), gain.getRaw());
+    gain.reset();
+    try t.expectEqual(@as(f64, 0.5), gain.getRaw());
+}
+
+test "Float getRaw returns f64 precision" {
+    var param: Float(.{ .name = "P", .default = 0.123456789012345 }) = .{};
+    try t.expectEqual(@as(f64, 0.123456789012345), param.getRaw());
+}
+
+test "discoverParams finds param fields" {
+    const Params = struct {
+        gain: Float(.{ .name = "Gain", .default = 0.5 }) = .{},
+        pan: Float(.{ .name = "Pan", .min = -1.0, .max = 1.0 }) = .{},
+    };
+    const discovered = comptime discoverParams(Params);
+    try t.expectEqual(@as(usize, 2), discovered.len);
+    try t.expectEqualStrings("gain", discovered[0].field_name);
+    try t.expectEqualStrings("pan", discovered[1].field_name);
+}
+
+test "discoverParams returns empty for zero-param struct" {
+    const discovered = comptime discoverParams(struct {});
+    try t.expectEqual(@as(usize, 0), discovered.len);
+}
+
+test "discoverParams uses explicit id when provided" {
+    const Params = struct {
+        level: Float(.{ .name = "Level", .id = 42 }) = .{},
+    };
+    const discovered = comptime discoverParams(Params);
+    try t.expectEqual(@as(u32, 42), discovered[0].id);
+}
+
+test "discoverParams hashes field name when no explicit id" {
+    const Params = struct {
+        gain: Float(.{ .name = "Gain" }) = .{},
+    };
+    const discovered = comptime discoverParams(Params);
+    try t.expectEqual(comptime hashFieldName("gain"), discovered[0].id);
+}
+
+test "discoverParams skips non-param fields" {
+    const Params = struct {
+        gain: Float(.{ .name = "Gain" }) = .{},
+        scratch: f64 = 0,
+    };
+    const discovered = comptime discoverParams(Params);
+    try t.expectEqual(@as(usize, 1), discovered.len);
+    try t.expectEqualStrings("gain", discovered[0].field_name);
 }
