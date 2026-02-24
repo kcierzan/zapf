@@ -3,6 +3,7 @@ const t = std.testing;
 
 const audio_ports_ext = @import("../adapters/clap_extensions/audio_ports.zig");
 const params_ext = @import("../adapters/clap_extensions/params.zig");
+const state_ext = @import("../adapters/clap_extensions/state.zig");
 const clap = @import("../api/clap.zig");
 const events = @import("../events.zig");
 const params_mod = @import("../params.zig");
@@ -26,6 +27,7 @@ pub fn ClapAdapter(comptime PluginType: type) type {
         const clap_desc = toClapDescriptor(PluginType.descriptor);
         const AudioPorts = audio_ports_ext.AudioPortsExtension(PluginType);
         const Params = params_ext.ParamsExtension(PluginType);
+        const State = state_ext.StateExtension(PluginType);
 
         const max_channels = 16;
 
@@ -174,6 +176,9 @@ pub fn ClapAdapter(comptime PluginType: type) type {
             if (std.mem.eql(u8, ext_id, Params.extension_name)) {
                 return @ptrCast(&Params.ext);
             }
+            if (std.mem.eql(u8, ext_id, State.extension_name)) {
+                return @ptrCast(&State.ext);
+            }
             return null;
         }
 
@@ -227,6 +232,12 @@ test "pluginGetExtension returns params extension" {
     const Adapter = ClapAdapter(TestPlugin);
     const params_ptr = Adapter.pluginGetExtension(undefined, &clap.EXT_PARAMS);
     try t.expect(params_ptr != null);
+}
+
+test "pluginGetExtension returns state extension" {
+    const Adapter = ClapAdapter(TestPlugin);
+    const state_ptr = Adapter.pluginGetExtension(undefined, &clap.EXT_STATE);
+    try t.expect(state_ptr != null);
 }
 
 test "pluginGetExtension with unknown extension returns null" {

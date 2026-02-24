@@ -29,5 +29,6 @@ test {
     _ = @import("adapters/clap.zig");
     _ = @import("adapters/clap_extensions/audio_ports.zig");
     _ = @import("adapters/clap_extensions/params.zig");
+    _ = @import("adapters/clap_extensions/state.zig");
     _ = @import("tests/mock_host.zig");
 }

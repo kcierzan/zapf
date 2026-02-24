@@ -125,6 +125,65 @@ const GainTestPlugin = struct {
     }
 };
 
+const clap = @import("../api/clap.zig");
+const adapter = @import("../adapters/clap.zig");
+const state_ext = @import("../adapters/clap_extensions/state.zig");
+
+const MockStream = struct {
+    const max_size = 4096;
+
+    data: [max_size]u8 = undefined,
+    len: usize = 0,
+    read_pos: usize = 0,
+
+    fn ostream(self: *MockStream) clap.Stream.Ostream {
+        return .{ .ctx = self, .write = mockWrite };
+    }
+
+    fn istream(self: *MockStream) clap.Stream.Istream {
+        return .{ .ctx = self, .read = mockRead };
+    }
+
+    fn mockWrite(stream: [*c]const clap.Stream.Ostream, buffer: ?*const anyopaque, size: u64) callconv(.c) i64 {
+        const self: *MockStream = @ptrCast(@alignCast(stream.*.ctx));
+        const n: usize = @intCast(size);
+        if (self.len + n > max_size) return -1;
+        const src: [*]const u8 = @ptrCast(buffer.?);
+        @memcpy(self.data[self.len..][0..n], src[0..n]);
+        self.len += n;
+        return @intCast(size);
+    }
+
+    fn mockRead(stream: [*c]const clap.Stream.Istream, buffer: ?*anyopaque, size: u64) callconv(.c) i64 {
+        const self: *MockStream = @ptrCast(@alignCast(stream.*.ctx));
+        const n: usize = @intCast(size);
+        const available = self.len - self.read_pos;
+        if (available == 0) return 0;
+        const to_read = @min(n, available);
+        const dst: [*]u8 = @ptrCast(buffer.?);
+        @memcpy(dst[0..to_read], self.data[self.read_pos..][0..to_read]);
+        self.read_pos += to_read;
+        return @intCast(to_read);
+    }
+};
+
+fn makeTestPlugin(data: *adapter.InstanceData(GainTestPlugin)) clap.Plugin {
+    return clap.Plugin{
+        .desc = undefined,
+        .plugin_data = data,
+        .init = undefined,
+        .destroy = undefined,
+        .activate = undefined,
+        .deactivate = undefined,
+        .start_processing = undefined,
+        .stop_processing = undefined,
+        .reset = undefined,
+        .process = undefined,
+        .get_extension = undefined,
+        .on_main_thread = undefined,
+    };
+}
+
 test "MockHost can process audio through a gain plugin" {
     var host = MockHost(GainTestPlugin).init(441000.0);
 
@@ -135,4 +194,39 @@ test "MockHost can process audio through a gain plugin" {
     try t.expectEqual(process_mod.ProcessResult.continue_if_not_quiet, result);
     try t.expectApproxEqAbs(@as(f32, 0.5), host.getOutput(0, 0), 0.001);
     try t.expectApproxEqAbs(@as(f32, 0.5), host.getOutput(1, 0), 0.001);
+}
+
+test "state save/load round-trip preserves gain and audio output" {
+    const Ext = state_ext.StateExtension(GainTestPlugin);
+
+    // Set up CLAP adapter wrapper for state extension
+    var instance = adapter.InstanceData(GainTestPlugin){ .plugin = .{} };
+    instance.plugin.init(44100.0);
+    var plugin = makeTestPlugin(&instance);
+
+    // Set gain to 0.8 and save state
+    instance.plugin.params.gain.set(0.8);
+    var stream = MockStream{};
+    var os = stream.ostream();
+    try t.expect(Ext.ext.save.?(&plugin, &os));
+
+    // Reset gain to default
+    instance.plugin.params.gain.reset();
+    try t.expectApproxEqAbs(@as(f64, 0.5), instance.plugin.params.gain.getRaw(), 1e-10);
+
+    // Load state — gain should be restored to 0.8
+    var is = stream.istream();
+    try t.expect(Ext.ext.load.?(&plugin, &is));
+    try t.expectApproxEqAbs(@as(f64, 0.8), instance.plugin.params.gain.getRaw(), 1e-10);
+
+    // Process audio through MockHost and verify output reflects loaded gain
+    var host = MockHost(GainTestPlugin).init(44100.0);
+    host.plugin.params.gain.set(0.8);
+    host.fillInput(0, 1.0, 64);
+    host.fillInput(1, 1.0, 64);
+
+    const result = host.processBlock(64);
+    try t.expectEqual(process_mod.ProcessResult.continue_if_not_quiet, result);
+    try t.expectApproxEqAbs(@as(f32, 0.8), host.getOutput(0, 0), 0.001);
+    try t.expectApproxEqAbs(@as(f32, 0.8), host.getOutput(1, 0), 0.001);
 }
