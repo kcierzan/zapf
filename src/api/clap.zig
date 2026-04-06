@@ -18,6 +18,8 @@ pub const EventParam = c.clap_event_param_value_t;
 pub const EventTransport = c.clap_event_transport_t;
 pub const Host = c.clap_host_t;
 pub const InputEvents = c.clap_input_events_t;
+pub const NotePorts = c.clap_plugin_note_ports_t;
+pub const NotePortInfo = c.clap_note_port_info_t;
 pub const OutputEvents = c.clap_output_events_t;
 pub const ParamInfo = c.clap_param_info_t;
 pub const Plugin = c.clap_plugin_t;
@@ -38,6 +40,7 @@ pub const Stream = struct {
 pub const AUDIO_PORT_IS_MAIN = c.CLAP_AUDIO_PORT_IS_MAIN;
 pub const CORE_EVENT_SPACE_ID = c.CLAP_CORE_EVENT_SPACE_ID;
 pub const EXT_AUDIO_PORTS = c.CLAP_EXT_AUDIO_PORTS;
+pub const EXT_NOTE_PORTS = c.CLAP_EXT_NOTE_PORTS;
 pub const EXT_PARAMS = c.CLAP_EXT_PARAMS;
 pub const EXT_STATE = c.CLAP_EXT_STATE;
 pub const INVALID_ID = std.math.maxInt(u32);
@@ -100,6 +103,13 @@ pub const NoteExpression = struct {
     pub const EXPRESSION = c.CLAP_NOTE_EXPRESSION_EXPRESSION;
     pub const BRIGHTNESS = c.CLAP_NOTE_EXPRESSION_BRIGHTNESS;
     pub const PRESSURE = c.CLAP_NOTE_EXPRESSION_PRESSURE;
+};
+
+pub const NoteDialect = struct {
+    pub const CLAP = c.CLAP_NOTE_DIALECT_CLAP;
+    pub const MIDI = c.CLAP_NOTE_DIALECT_MIDI;
+    pub const MIDI_MPE = c.CLAP_NOTE_DIALECT_MIDI_MPE;
+    pub const MIDI2 = c.CLAP_NOTE_DIALECT_MIDI2;
 };
 
 pub const PluginFeatures = struct {

@@ -20,6 +20,8 @@ const GainPlugin = struct {
         .output_channels = 2,
     };
 
+    pub const note_ports = zapf.NotePortsConfig{};
+
     params: Params = .{},
     sample_rate: f64 = 0,
 

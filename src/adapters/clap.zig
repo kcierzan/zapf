@@ -2,6 +2,7 @@ const std = @import("std");
 const t = std.testing;
 
 const audio_ports_ext = @import("../adapters/clap_extensions/audio_ports.zig");
+const note_ports_ext = @import("../adapters/clap_extensions/note_ports.zig");
 const params_ext = @import("../adapters/clap_extensions/params.zig");
 const state_ext = @import("../adapters/clap_extensions/state.zig");
 const clap = @import("../api/clap.zig");
@@ -26,6 +27,7 @@ pub fn ClapAdapter(comptime PluginType: type) type {
         const Self = @This();
         const clap_desc = toClapDescriptor(PluginType.descriptor);
         const AudioPorts = audio_ports_ext.AudioPortsExtension(PluginType);
+        const NotePorts = note_ports_ext.NotePortsExtension(PluginType);
         const Params = params_ext.ParamsExtension(PluginType);
         const State = state_ext.StateExtension(PluginType);
 
@@ -173,6 +175,9 @@ pub fn ClapAdapter(comptime PluginType: type) type {
             if (std.mem.eql(u8, ext_id, AudioPorts.extension_name)) {
                 return @ptrCast(&AudioPorts.ext);
             }
+            if (std.mem.eql(u8, ext_id, NotePorts.extension_name)) {
+                return @ptrCast(&NotePorts.ext);
+            }
             if (std.mem.eql(u8, ext_id, Params.extension_name)) {
                 return @ptrCast(&Params.ext);
             }
@@ -196,6 +201,7 @@ const TestPlugin = struct {
         .version = "1.0.0",
     };
     pub const audio_ports = @import("../audio.zig").AudioPortConfig{};
+    pub const note_ports = @import("../notes.zig").NotePortsConfig{};
 
     params: struct {} = .{},
     initialized: bool = false,
@@ -238,6 +244,12 @@ test "pluginGetExtension returns state extension" {
     const Adapter = ClapAdapter(TestPlugin);
     const state_ptr = Adapter.pluginGetExtension(undefined, &clap.EXT_STATE);
     try t.expect(state_ptr != null);
+}
+
+test "pluginGetExtension returns note-ports extension" {
+    const Adapter = ClapAdapter(TestPlugin);
+    const note_ports_ptr = Adapter.pluginGetExtension(undefined, &clap.EXT_NOTE_PORTS);
+    try t.expect(note_ports_ptr != null);
 }
 
 test "pluginGetExtension with unknown extension returns null" {
