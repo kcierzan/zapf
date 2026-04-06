@@ -1,6 +1,7 @@
 const std = @import("std");
 const params_mod = @import("params.zig");
 const audio = @import("audio.zig");
+const notes = @import("notes.zig");
 const events = @import("events.zig");
 
 pub const PluginDescriptor = struct {
@@ -26,6 +27,9 @@ pub fn validatePlugin(comptime T: type) void {
 
     if (!@hasDecl(T, "audio_ports"))
         @compileError("Plugin '" ++ @typeName(T) ++ "' missing required declaration 'audio_ports'");
+
+    if (!@hasDecl(T, "note_ports"))
+        @compileError("Plugin '" ++ @typeName(T) ++ "' missing required declaration 'note_ports'");
 
     if (!@hasField(T, "params"))
         @compileError("Plugin '" ++ @typeName(T) ++ "' missing required field 'params'");
@@ -78,6 +82,7 @@ const ValidPlugin = struct {
         .version = "1.0.0",
     };
     pub const audio_ports = audio.AudioPortConfig{};
+    pub const note_ports = notes.NotePortsConfig{};
 
     params: struct {} = .{},
 
