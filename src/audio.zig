@@ -1,6 +1,8 @@
 const std = @import("std");
 const t = std.testing;
 
+pub const max_channels = 16;
+
 pub const AudioPortConfig = struct {
     input_channels: u32 = 2,
     output_channels: u32 = 2,

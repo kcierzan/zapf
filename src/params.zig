@@ -46,6 +46,21 @@ pub fn Float(comptime opts: ParamOpts) type {
     };
 }
 
+pub const ParamChangeEvent = struct {
+    time: u32,
+    param_id: u32,
+    value: f64,
+};
+
+pub fn applyParamChange(comptime ParamsType: type, params: *ParamsType, change: ParamChangeEvent) void {
+    const discovered = comptime discoverParams(ParamsType);
+    inline for (discovered) |d| {
+        if (d.id == change.param_id) {
+            @field(params, d.field_name).set(change.value);
+        }
+    }
+}
+
 pub const DiscoveredParam = struct {
     id: u32,
     field_name: [:0]const u8,
@@ -181,4 +196,28 @@ test "discoverParams skips non-param fields" {
     const discovered = comptime discoverParams(Params);
     try t.expectEqual(@as(usize, 1), discovered.len);
     try t.expectEqualStrings("gain", discovered[0].field_name);
+}
+
+test "applyParamChange sets the matching param value" {
+    const Params = struct {
+        gain: Float(.{ .name = "Gain", .default = 0.5 }) = .{},
+        pan: Float(.{ .name = "Pan", .min = -1.0, .max = 1.0, .default = 0.0 }) = .{},
+    };
+    var p = Params{};
+    const gain_id = comptime hashFieldName("gain");
+
+    applyParamChange(Params, &p, .{ .time = 0, .param_id = gain_id, .value = 0.8 });
+    try t.expectEqual(@as(f64, 0.8), p.gain.getRaw());
+    // pan should be unchanged
+    try t.expectEqual(@as(f64, 0.0), p.pan.getRaw());
+}
+
+test "applyParamChange ignores unknown param id" {
+    const Params = struct {
+        gain: Float(.{ .name = "Gain", .default = 0.5 }) = .{},
+    };
+    var p = Params{};
+
+    applyParamChange(Params, &p, .{ .time = 0, .param_id = 99999, .value = 0.8 });
+    try t.expectEqual(@as(f64, 0.5), p.gain.getRaw());
 }

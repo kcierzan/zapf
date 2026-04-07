@@ -5,6 +5,7 @@ const audio_ports_ext = @import("../adapters/clap_extensions/audio_ports.zig");
 const note_ports_ext = @import("../adapters/clap_extensions/note_ports.zig");
 const params_ext = @import("../adapters/clap_extensions/params.zig");
 const state_ext = @import("../adapters/clap_extensions/state.zig");
+const audio_mod = @import("../audio.zig");
 const clap = @import("../api/clap.zig");
 const events = @import("../events.zig");
 const params_mod = @import("../params.zig");
@@ -31,7 +32,7 @@ pub fn ClapAdapter(comptime PluginType: type) type {
         const Params = params_ext.ParamsExtension(PluginType);
         const State = state_ext.StateExtension(PluginType);
 
-        const max_channels = 16;
+        const max_channels = audio_mod.max_channels;
 
         /// The clap_plugin_t instance. Hosts receive a pointer to this.
         fn makePluginVtable(instance: *Instance) clap.Plugin {
@@ -117,9 +118,6 @@ pub fn ClapAdapter(comptime PluginType: type) type {
             const p = process.*;
             const frame_count = p.frames_count;
 
-            // TODO: slicing buffer slices by event offsets would happen here!
-            // we should make this a generic behavior to re-use it across adapters
-
             // build input channel slices
             var input_slices: [max_channels][]const f32 = undefined;
             var in_channels: u32 = 0;
@@ -143,25 +141,27 @@ pub fn ClapAdapter(comptime PluginType: type) type {
 
             const in_events: *const clap.InputEvents = p.in_events orelse &empty_input_events;
 
-            params_ext.applyParamEvents(PluginType, &data.plugin, in_events);
+            // Extract param changes for sample-accurate splitting
+            var param_buf: [512]params_mod.ParamChangeEvent = undefined;
+            const param_changes = extractParamChanges(in_events, &param_buf);
 
             const event_count: u32 = if (in_events.size) |size_fn| size_fn(in_events) else 0;
 
-            // Construct the generic ProcessContext - ClapEventIterator skips param events
-            const Context = process_mod.ProcessContext(ClapEventIterator);
-            const ctx = Context{
-                .input = input_slices[0..in_channels],
-                .output = output_slices[0..out_channels],
-                .frame_count = frame_count,
-                .sample_rate = data.sample_rate,
-                .steady_time = p.steady_time,
-                .events = ClapEventIterator{
+            // Delegate to the generic splitting engine
+            const result = process_mod.processWithSplitting(
+                PluginType,
+                &data.plugin,
+                input_slices[0..in_channels],
+                output_slices[0..out_channels],
+                frame_count,
+                data.sample_rate,
+                p.steady_time,
+                param_changes,
+                ClapEventIterator{
                     .input_events = in_events,
                     .count = event_count,
                 },
-            };
-
-            const result = data.plugin.process(ctx);
+            );
             return toClapProcessResult(result);
         }
 
@@ -380,6 +380,29 @@ const ClapEventIterator = struct {
         };
     }
 };
+
+fn extractParamChanges(
+    in_events: *const clap.InputEvents,
+    buf: []params_mod.ParamChangeEvent,
+) []params_mod.ParamChangeEvent {
+    const size_fn = in_events.size orelse return buf[0..0];
+    const get_fn = in_events.get orelse return buf[0..0];
+    const count = size_fn(in_events);
+    var n: usize = 0;
+    for (0..count) |i| {
+        const header: *const clap.EventHeader = get_fn(in_events, @intCast(i));
+        if (header.space_id == clap.CORE_EVENT_SPACE_ID and
+            header.type == clap.Event.EVENT_PARAM_VALUE)
+        {
+            const ev: *const clap.EventParam = @ptrCast(@alignCast(header));
+            if (n < buf.len) {
+                buf[n] = .{ .time = header.time, .param_id = ev.param_id, .value = ev.value };
+                n += 1;
+            }
+        }
+    }
+    return buf[0..n];
+}
 
 /// Top-level function that plugin authors call in a `comptime` block
 /// Generates and exports the `clap_entry` symbol

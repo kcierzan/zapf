@@ -42,6 +42,46 @@ pub fn isEventIterator(comptime T: type) bool {
     return true;
 }
 
+pub fn SubBlockEventIterator(comptime Inner: type) type {
+    return struct {
+        const Self = @This();
+
+        inner: Inner,
+        block_start: u32,
+        block_end: u32,
+        peeked: ?PluginEvent = null,
+
+        pub fn next(self: *Self) ?PluginEvent {
+            const ev = blk: {
+                if (self.peeked) |p| {
+                    self.peeked = null;
+                    break :blk p;
+                }
+                break :blk self.inner.next() orelse return null;
+            };
+
+            if (ev.time >= self.block_end) {
+                self.peeked = ev;
+                return null;
+            }
+
+            var adjusted = ev;
+            adjusted.time -= self.block_start;
+            return adjusted;
+        }
+
+        pub fn reset(self: *Self) void {
+            self.inner.reset();
+            self.peeked = null;
+        }
+
+        pub fn setBlock(self: *Self, start: u32, end: u32) void {
+            self.block_start = start;
+            self.block_end = end;
+        }
+    };
+}
+
 pub const SliceEventIterator = struct {
     events_buf: []const PluginEvent,
     index: u32 = 0,
@@ -62,6 +102,73 @@ pub const SliceEventIterator = struct {
 
 test "SliceEventIterator is an event iterator" {
     try t.expect(isEventIterator(SliceEventIterator));
+}
+
+test "SubBlockEventIterator satisfies isEventIterator" {
+    try t.expect(isEventIterator(SubBlockEventIterator(SliceEventIterator)));
+}
+
+test "SubBlockEventIterator filters events to block window and adjusts time" {
+    const ev = [_]PluginEvent{
+        .{ .time = 10, .data = .{ .note_on = .{ .note_id = 1, .port_index = 0, .channel = 0, .key = 60, .velocity = 0.8 } } },
+        .{ .time = 30, .data = .{ .note_off = .{ .note_id = 1, .port_index = 0, .channel = 0, .key = 60, .velocity = 0.0 } } },
+        .{ .time = 80, .data = .{ .note_on = .{ .note_id = 2, .port_index = 0, .channel = 0, .key = 64, .velocity = 0.9 } } },
+    };
+
+    var iter = SubBlockEventIterator(SliceEventIterator){
+        .inner = .{ .events_buf = &ev },
+        .block_start = 0,
+        .block_end = 64,
+    };
+
+    // First event at time 10, adjusted to 10 - 0 = 10
+    const first = iter.next().?;
+    try t.expectEqual(@as(u32, 10), first.time);
+    try t.expectEqual(@as(i16, 60), first.data.note_on.key);
+
+    // Second event at time 30, adjusted to 30 - 0 = 30
+    const second = iter.next().?;
+    try t.expectEqual(@as(u32, 30), second.time);
+
+    // Third event at time 80 is past block_end=64, should return null and be peeked
+    try t.expectEqual(iter.next(), null);
+
+    // Advance to next block [64, 128)
+    iter.setBlock(64, 128);
+    const third = iter.next().?;
+    try t.expectEqual(@as(u32, 16), third.time); // 80 - 64 = 16
+    try t.expectEqual(@as(i16, 64), third.data.note_on.key);
+
+    // No more events
+    try t.expectEqual(iter.next(), null);
+}
+
+test "SubBlockEventIterator returns null for empty inner iterator" {
+    var iter = SubBlockEventIterator(SliceEventIterator){
+        .inner = SliceEventIterator.empty,
+        .block_start = 0,
+        .block_end = 128,
+    };
+    try t.expectEqual(iter.next(), null);
+}
+
+test "SubBlockEventIterator reset clears peeked state" {
+    const ev = [_]PluginEvent{
+        .{ .time = 100, .data = .unknown },
+    };
+
+    var iter = SubBlockEventIterator(SliceEventIterator){
+        .inner = .{ .events_buf = &ev },
+        .block_start = 0,
+        .block_end = 64,
+    };
+
+    // Event at 100 is past block_end, gets peeked
+    try t.expectEqual(iter.next(), null);
+    try t.expect(iter.peeked != null);
+
+    iter.reset();
+    try t.expect(iter.peeked == null);
 }
 
 const NonIterator = struct {
