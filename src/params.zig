@@ -12,15 +12,27 @@ pub const ParamFlags = struct {
 
 pub const ParamOpts = struct {
     name: [:0]const u8,
+    /// Host grouping path, e.g. "Envelope/Attack". Uses "/" as separator.
+    /// Empty string means no grouping. Max 1023 bytes (CLAP_PATH_SIZE - 1).
     module: [:0]const u8 = "",
     min: f64 = 0.0,
     max: f64 = 1.0,
     default: f64 = 0.0,
     flags: ParamFlags = .{},
     id: ?u32 = null,
+    /// When set, paramsValueToText will format values as "{value} {unit}",
+    /// e.g. "440.00 Hz" or "-6.00 dB". When null, the host handles formatting.
+    unit: ?[:0]const u8 = null,
+    /// Snap step size for stepped params. Requires flags.stepped = true.
+    /// When null and stepped is true, defaults to 1.0 (integer snapping).
+    step: ?f64 = null,
 };
 
 pub fn Float(comptime opts: ParamOpts) type {
+    comptime {
+        if (opts.step != null and !opts.flags.stepped)
+            @compileError("'step' requires 'flags.stepped = true'");
+    }
     return struct {
         value: std.atomic.Value(f64) = .{ .raw = opts.default },
 
@@ -33,7 +45,13 @@ pub fn Float(comptime opts: ParamOpts) type {
         }
 
         pub fn set(self: *@This(), v: f64) void {
-            self.value.store(std.math.clamp(v, opts.min, opts.max), .monotonic);
+            var clamped = std.math.clamp(v, opts.min, opts.max);
+            if (opts.flags.stepped) {
+                const s = opts.step orelse 1.0;
+                clamped = opts.min + @round((clamped - opts.min) / s) * s;
+                clamped = std.math.clamp(clamped, opts.min, opts.max);
+            }
+            self.value.store(clamped, .monotonic);
         }
 
         pub fn reset(self: *@This()) void {
@@ -79,18 +97,94 @@ pub fn discoverParams(comptime ParamsType: type) []const DiscoveredParam {
             }
         }
 
-        for (0..count) |a| {
-            for (a + 1..count) |b| {
-                if (result[a].id == result[b].id) {
+        validateNoDuplicateIds(result[0..count]);
+        validateAtMostOneBypass(result[0..count]);
+        validateNameLengths(result[0..count]);
+
+        return &result;
+    }
+}
+
+/// Returns the raw f64 value of the param with the given ID, or null if not found.
+/// `params` must be a pointer to the plugin's Params struct.
+pub fn getById(params: anytype, id: u32) ?f64 {
+    const ParamsType = @typeInfo(@TypeOf(params)).pointer.child;
+    const discovered = comptime discoverParams(ParamsType);
+    inline for (discovered) |d| {
+        if (d.id == id) return @field(params, d.field_name).getRaw();
+    }
+    return null;
+}
+
+/// Sets the param with the given ID to value. No-op if the ID is not found.
+/// `params` must be a mutable pointer to the plugin's Params struct.
+pub fn setById(params: anytype, id: u32, value: f64) void {
+    const ParamsType = @typeInfo(@TypeOf(params)).pointer.child;
+    const discovered = comptime discoverParams(ParamsType);
+    inline for (discovered) |d| {
+        if (d.id == id) @field(params, d.field_name).set(value);
+    }
+}
+
+/// Returns the DiscoveredParam metadata for the param with the given ID, or null.
+pub fn metaById(comptime ParamsType: type, id: u32) ?DiscoveredParam {
+    const discovered = comptime discoverParams(ParamsType);
+    inline for (discovered) |d| {
+        if (d.id == id) return d;
+    }
+    return null;
+}
+
+/// Returns the DiscoveredParam metadata for the param at the given index, or null.
+pub fn metaByIndex(comptime ParamsType: type, index: u32) ?DiscoveredParam {
+    const discovered = comptime discoverParams(ParamsType);
+    comptime var idx: u32 = 0;
+    inline for (discovered) |d| {
+        if (idx == index) return d;
+        idx += 1;
+    }
+    return null;
+}
+
+fn validateNoDuplicateIds(comptime params: []const DiscoveredParam) void {
+    comptime {
+        for (0..params.len) |a| {
+            for (a + 1..params.len) |b| {
+                if (params[a].id == params[b].id) {
                     @compileError("param ID collision between '" ++
-                        result[a].field_name ++ "' and '" ++
-                        result[b].field_name ++ "' (both resolve to ID " ++
-                        std.fmt.comptimePrint("{d}", .{result[a].id}) ++ ")");
+                        params[a].field_name ++ "' and '" ++
+                        params[b].field_name ++ "' (both resolve to ID " ++
+                        std.fmt.comptimePrint("{d}", .{params[a].id}) ++ ")");
                 }
             }
         }
+    }
+}
 
-        return &result;
+fn validateNameLengths(comptime params: []const DiscoveredParam) void {
+    comptime {
+        for (params) |d| {
+            if (d.meta.name.len >= 256)
+                @compileError("param '" ++ d.field_name ++ "' name exceeds CLAP_NAME_SIZE (256 bytes)");
+            if (d.meta.module.len >= 1024)
+                @compileError("param '" ++ d.field_name ++ "' module path exceeds CLAP_PATH_SIZE (1024 bytes)");
+        }
+    }
+}
+
+fn validateAtMostOneBypass(comptime params: []const DiscoveredParam) void {
+    comptime {
+        var bypass_count: usize = 0;
+        var bypass_field: [:0]const u8 = "";
+        for (params) |d| {
+            if (d.meta.flags.bypass) {
+                bypass_count += 1;
+                if (bypass_count == 2)
+                    @compileError("multiple bypass params: '" ++ bypass_field ++
+                        "' and '" ++ d.field_name ++ "' — only one bypass param allowed");
+                bypass_field = d.field_name;
+            }
+        }
     }
 }
 
@@ -181,4 +275,44 @@ test "discoverParams skips non-param fields" {
     const discovered = comptime discoverParams(Params);
     try t.expectEqual(@as(usize, 1), discovered.len);
     try t.expectEqualStrings("gain", discovered[0].field_name);
+}
+
+test "Float stepped snaps to nearest integer by default" {
+    var p: Float(.{ .name = "Steps", .min = 0.0, .max = 4.0, .flags = .{ .stepped = true } }) = .{};
+    p.set(1.4);
+    try t.expectEqual(@as(f64, 1.0), p.getRaw());
+    p.set(1.6);
+    try t.expectEqual(@as(f64, 2.0), p.getRaw());
+}
+
+test "Float stepped with explicit step size snaps to nearest step" {
+    var p: Float(.{ .name = "Steps", .min = 0.0, .max = 1.0, .flags = .{ .stepped = true }, .step = 0.25 }) = .{};
+    p.set(0.1);
+    try t.expectEqual(@as(f64, 0.0), p.getRaw());
+    p.set(0.15);
+    try t.expectEqual(@as(f64, 0.25), p.getRaw());
+    p.set(0.9);
+    try t.expectEqual(@as(f64, 1.0), p.getRaw());
+}
+
+test "Float concurrent set/get produces no torn reads" {
+    const XParam = Float(.{ .name = "X", .min = 0.0, .max = 1.0, .default = 0.5 });
+    var param: XParam = .{};
+
+    const writer_thread = try std.Thread.spawn(.{}, struct {
+        fn run(p: *XParam) void {
+            for (0..100_000) |i| {
+                p.set(if (i % 2 == 0) 0.0 else 1.0);
+            }
+        }
+    }.run, .{&param});
+
+    for (0..100_000) |_| {
+        const v = param.get();
+        // A torn f64 write would produce a value outside [0, 1] or NaN,
+        // causing this assertion to fail.
+        try t.expect(v >= 0.0 and v <= 1.0);
+    }
+
+    writer_thread.join();
 }

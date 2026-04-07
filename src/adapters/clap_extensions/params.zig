@@ -46,27 +46,18 @@ pub fn ParamsExtension(comptime PluginType: type) type {
             info: [*c]clap.ParamInfo,
         ) callconv(.c) bool {
             _ = plugin;
-            const discovered = comptime discoverParams(@TypeOf(@as(PluginType, undefined).params));
-            if (param_index >= discovered.len) return false;
-
-            comptime var idx: u32 = 0;
-
-            inline for (discovered) |d| {
-                if (idx == param_index) {
-                    info.*.id = d.id;
-                    info.*.min_value = d.meta.min;
-                    info.*.max_value = d.meta.max;
-                    info.*.default_value = d.meta.default;
-                    info.*.flags = flagsToClap(d.meta.flags);
-                    @memcpy(info.*.name[0..d.meta.name.len], d.meta.name);
-                    info.*.name[d.meta.name.len] = 0;
-                    @memcpy(info.*.module[0..d.meta.module.len], d.meta.module);
-                    info.*.module[d.meta.module.len] = 0;
-                    return true;
-                }
-                idx += 1;
-            }
-            return false;
+            const ParamsType = @TypeOf(@as(PluginType, undefined).params);
+            const d = params_mod.metaByIndex(ParamsType, param_index) orelse return false;
+            info.*.id = d.id;
+            info.*.min_value = d.meta.min;
+            info.*.max_value = d.meta.max;
+            info.*.default_value = d.meta.default;
+            info.*.flags = flagsToClap(d.meta.flags);
+            @memcpy(info.*.name[0..d.meta.name.len], d.meta.name);
+            info.*.name[d.meta.name.len] = 0;
+            @memcpy(info.*.module[0..d.meta.module.len], d.meta.module);
+            info.*.module[d.meta.module.len] = 0;
+            return true;
         }
 
         fn paramsGetValue(
@@ -75,17 +66,8 @@ pub fn ParamsExtension(comptime PluginType: type) type {
             out_value: [*c]f64,
         ) callconv(.c) bool {
             const data: *Instance = getInstance(plugin);
-            const discovered = comptime discoverParams(
-                @TypeOf(@as(PluginType, undefined).params),
-            );
-
-            inline for (discovered) |d| {
-                if (d.id == param_id) {
-                    out_value.* = @field(&data.plugin.params, d.field_name).getRaw();
-                    return true;
-                }
-            }
-            return false;
+            out_value.* = params_mod.getById(&data.plugin.params, param_id) orelse return false;
+            return true;
         }
 
         fn paramsValueToText(
@@ -96,11 +78,16 @@ pub fn ParamsExtension(comptime PluginType: type) type {
             out_buf_size: u32,
         ) callconv(.c) bool {
             _ = plugin;
-            _ = param_id;
             if (out_buf_size == 0) return false;
-            const buf = out_buf[0..out_buf_size];
-            const result = std.fmt.bufPrint(buf[0 .. out_buf_size - 1], "{d:.2}", .{value}) catch return false;
-            buf[result.len] = 0;
+            const ParamsType = @TypeOf(@as(PluginType, undefined).params);
+            const d = params_mod.metaById(ParamsType, param_id) orelse return false;
+            const unit = d.meta.unit orelse return false;
+            const result = std.fmt.bufPrint(
+                out_buf[0 .. out_buf_size - 1],
+                "{d:.2} {s}",
+                .{ value, unit },
+            ) catch return false;
+            out_buf[result.len] = 0;
             return true;
         }
 
@@ -112,9 +99,9 @@ pub fn ParamsExtension(comptime PluginType: type) type {
         ) callconv(.c) bool {
             _ = plugin;
             _ = param_id;
-            const str = std.mem.span(text);
-            out_value.* = std.fmt.parseFloat(f64, str) catch return false;
-            return true;
+            _ = text;
+            _ = out_value;
+            return false;
         }
 
         fn paramsFlush(
@@ -139,21 +126,13 @@ pub fn applyParamEvents(comptime PluginType: type, instance: *PluginType, ie: *c
     const get_fn = ie.*.get orelse return;
     const event_count = size_fn(ie);
 
-    const discovered = comptime discoverParams(
-        @TypeOf(@as(PluginType, undefined).params),
-    );
-
     for (0..event_count) |i| {
         const header: *const clap.EventHeader = get_fn(ie, @intCast(i));
         if (header.space_id == clap.CORE_EVENT_SPACE_ID and
             header.type == clap.Event.EVENT_PARAM_VALUE)
         {
             const ev: *const clap.EventParam = @ptrCast(@alignCast(header));
-            inline for (discovered) |d| {
-                if (d.id == ev.param_id) {
-                    @field(&instance.params, d.field_name).set(ev.value);
-                }
-            }
+            params_mod.setById(&instance.params, ev.param_id, ev.value);
         }
     }
 }
@@ -263,35 +242,69 @@ test "paramsGetValue returns false for unknown param id" {
     try t.expect(!Ext.paramsGetValue(&plugin, 999, &value));
 }
 
-test "paramsValueToText and paramsTextToValue round-trip" {
+const TestPluginWithUnit = struct {
+    pub const descriptor = plugin_mod.PluginDescriptor{
+        .id = "com.test.unit",
+        .name = "Unit Test",
+        .vendor = "Test",
+        .version = "1.0.0",
+    };
+    params: Params = .{},
+    const Params = struct {
+        freq: Float(.{ .name = "Frequency", .min = 20.0, .max = 20000.0, .default = 440.0, .unit = "Hz" }) = .{},
+    };
+    pub const audio_ports = @import("../../audio.zig").AudioPortConfig{};
+    pub fn init(self: *@This(), sample_rate: f64) void {
+        _ = self;
+        _ = sample_rate;
+    }
+    pub fn process(self: *@This(), ctx: anytype) @import("../../process.zig").ProcessResult {
+        _ = self;
+        _ = ctx;
+        return .@"continue";
+    }
+};
+
+test "paramsValueToText returns false for param without unit" {
     const Ext = ParamsExtension(TestPluginWithParams);
     var buf: [64]u8 = undefined;
-    try t.expect(Ext.paramsValueToText(undefined, 0, 0.75, &buf, buf.len));
-    const text = std.mem.sliceTo(&buf, 0);
-    var result: f64 = undefined;
-    try t.expect(Ext.paramsTextToValue(undefined, 0, text.ptr, &result));
-    try t.expectEqual(@as(f64, 0.75), result);
+    const gain_id = comptime params_mod.hashFieldName("gain");
+    try t.expect(!Ext.paramsValueToText(undefined, gain_id, 0.75, &buf, buf.len));
+}
+
+test "paramsValueToText formats value with unit when unit is set" {
+    const Ext = ParamsExtension(TestPluginWithUnit);
+    var buf: [64]u8 = undefined;
+    const freq_id = comptime params_mod.hashFieldName("freq");
+    try t.expect(Ext.paramsValueToText(undefined, freq_id, 440.0, &buf, buf.len));
+    try t.expectEqualStrings("440.00 Hz", std.mem.sliceTo(&buf, 0));
+}
+
+test "paramsValueToText returns false for unknown param id" {
+    const Ext = ParamsExtension(TestPluginWithUnit);
+    var buf: [64]u8 = undefined;
+    try t.expect(!Ext.paramsValueToText(undefined, 9999, 440.0, &buf, buf.len));
 }
 
 test "paramsValueToText returns false for zero-size buffer" {
-    const Ext = ParamsExtension(TestPluginWithParams);
+    const Ext = ParamsExtension(TestPluginWithUnit);
     var buf: [1]u8 = undefined;
-    try t.expect(!Ext.paramsValueToText(undefined, 0, 0.75, &buf, 0));
+    const freq_id = comptime params_mod.hashFieldName("freq");
+    try t.expect(!Ext.paramsValueToText(undefined, freq_id, 440.0, &buf, 0));
 }
 
-test "paramsValueToText null-terminates within exact-fit buffer" {
-    const Ext = ParamsExtension(TestPluginWithParams);
-    // "0.75" is 4 chars; buffer of 5 fits the text + null exactly
-    var buf: [5]u8 = .{ 0xff, 0xff, 0xff, 0xff, 0xff };
-    try t.expect(Ext.paramsValueToText(undefined, 0, 0.75, &buf, buf.len));
-    try t.expectEqualStrings("0.75", std.mem.sliceTo(&buf, 0));
+test "paramsValueToText returns false when buffer is too small for formatted value" {
+    const Ext = ParamsExtension(TestPluginWithUnit);
+    // "440.00 Hz" is 9 chars + null = 10 bytes; buffer of 5 is too small
+    var buf: [5]u8 = undefined;
+    const freq_id = comptime params_mod.hashFieldName("freq");
+    try t.expect(!Ext.paramsValueToText(undefined, freq_id, 440.0, &buf, buf.len));
 }
 
-test "paramsValueToText returns false when buffer is too small for value" {
+test "paramsTextToValue always returns false" {
     const Ext = ParamsExtension(TestPluginWithParams);
-    // "0.75" needs 4 chars + null = 5 bytes; buffer of 2 (1 usable) is too small
-    var buf: [2]u8 = undefined;
-    try t.expect(!Ext.paramsValueToText(undefined, 0, 0.75, &buf, buf.len));
+    var result: f64 = undefined;
+    try t.expect(!Ext.paramsTextToValue(undefined, 0, "0.75", &result));
 }
 
 test "applyParamEvents is a no-op with null function pointers" {

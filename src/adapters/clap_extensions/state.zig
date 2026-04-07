@@ -68,9 +68,6 @@ pub fn StateExtension(comptime PluginType: type) type {
 
         fn stateLoad(plugin: [*c]const clap.Plugin, istream: [*c]const clap.Stream.Istream) callconv(.c) bool {
             const data = getInstance(plugin);
-            const discovered = comptime discoverParams(
-                @TypeOf(@as(PluginType, undefined).params),
-            );
 
             var header: Header = undefined;
 
@@ -92,11 +89,7 @@ pub fn StateExtension(comptime PluginType: type) type {
                 if (!streamReadAll(istream, std.mem.asBytes(&val_raw))) return false;
                 const value = std.mem.littleToNative(f64, val_raw);
 
-                inline for (discovered) |d| {
-                    if (d.id == id) {
-                        @field(&data.plugin.params, d.field_name).set(value);
-                    }
-                }
+                params_mod.setById(&data.plugin.params, id, value);
             }
 
             return true;
